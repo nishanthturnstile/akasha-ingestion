@@ -68,19 +68,19 @@ flowchart TD
 
 Use these workstreams across phases so planning and execution remain organized.
 
-| Workstream | Responsibility |
-|---|---|
-| Infrastructure | Azure VM, on-prem VM, Docker, networking, storage, backups, deployment. |
-| Platform services | FastAPI, PostGIS/pgSTAC, MinIO, Celery, Redis/RabbitMQ, TiTiler, scheduler. |
-| Provider integrations | CDSE, Bhoonidhi/NRSC, USGS, Earthdata, future vendor adapters. |
-| Provider execution | Provider-specific rate limits, quotas, retries, staging, token-bucket/backpressure, and queue routing. |
-| Raster processing | all-band inventory, extraction, metadata parsing, CRS, resampling, AC, masking, index engine, COG generation. |
-| Metadata and catalog | source registry, scene catalog, orders, jobs, raw/extracted/ARD/derived assets, raster outputs, provenance. |
-| API and serving | source API, sync API, jobs API, field index API, time-series/progressive NDVI API, signed tile/stat URLs. |
-| Security and compliance | API auth, rate limits, secrets, license/product exposure, audit logs. |
-| Observability and operations | metrics, logs, alerts, dashboards, failed-job visibility, runbooks. |
-| Validation and QA | sample-product checks, golden raster tests, COG validation, cross-source validation. |
-| Documentation | runbooks, adapter contracts, source activation checklist, operator procedures. |
+| Workstream                   | Responsibility                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Infrastructure               | Azure VM, on-prem VM, Docker, networking, storage, backups, deployment.                                       |
+| Platform services            | FastAPI, PostGIS/pgSTAC, MinIO, Celery, Redis/RabbitMQ, TiTiler, scheduler.                                   |
+| Provider integrations        | CDSE, Bhoonidhi/NRSC, USGS, Earthdata, future vendor adapters.                                                |
+| Provider execution           | Provider-specific rate limits, quotas, retries, staging, token-bucket/backpressure, and queue routing.        |
+| Raster processing            | all-band inventory, extraction, metadata parsing, CRS, resampling, AC, masking, index engine, COG generation. |
+| Metadata and catalog         | source registry, scene catalog, orders, jobs, raw/extracted/ARD/derived assets, raster outputs, provenance.   |
+| API and serving              | source API, sync API, jobs API, field index API, time-series/progressive NDVI API, signed tile/stat URLs.     |
+| Security and compliance      | API auth, rate limits, secrets, license/product exposure, audit logs.                                         |
+| Observability and operations | metrics, logs, alerts, dashboards, failed-job visibility, runbooks.                                           |
+| Validation and QA            | sample-product checks, golden raster tests, COG validation, cross-source validation.                          |
+| Documentation                | runbooks, adapter contracts, source activation checklist, operator procedures.                                |
 
 ## 6. Phase -1: planning baseline
 
@@ -90,12 +90,12 @@ Confirm the planning foundation before implementation starts.
 
 ### Current status
 
-| Deliverable | Status |
-|---|---|
-| High-level ingestion plan | Complete |
-| Satellite catalogue | Complete |
-| Architecture and technology stack document | Complete |
-| Implementation roadmap | This document |
+| Deliverable                                | Status        |
+| ------------------------------------------ | ------------- |
+| High-level ingestion plan                  | Complete      |
+| Satellite catalogue                        | Complete      |
+| Architecture and technology stack document | Complete      |
+| Implementation roadmap                     | This document |
 
 ### Exit gate
 
@@ -165,12 +165,12 @@ Acceptance:
 
 Providers:
 
-| Provider | Source | Required validation |
-|---|---|---|
+| Provider       | Source         | Required validation                                                          |
+| -------------- | -------------- | ---------------------------------------------------------------------------- |
 | Bhoonidhi/NRSC | ResourceSat-2A | Login/API access, order/staging behavior, download links, expiry, checksums. |
-| CDSE | Sentinel-2 | Auth, catalogue search, L2A product access, download. |
-| USGS/M2M | Landsat 8/9 | Auth, search, Collection 2 Level 2 access, QA_PIXEL asset access. |
-| Earthdata | MODIS later | Auth only for future readiness; not MVP field analytics. |
+| CDSE           | Sentinel-2     | Auth, catalogue search, L2A product access, download.                        |
+| USGS/M2M       | Landsat 8/9    | Auth, search, Collection 2 Level 2 access, QA_PIXEL asset access.            |
+| Earthdata      | MODIS later    | Auth only for future readiness; not MVP field analytics.                     |
 
 Acceptance:
 
@@ -182,13 +182,13 @@ Acceptance:
 
 Download 3 to 5 representative products per MVP source:
 
-| Source | Sample target |
-|---|---|
-| Sentinel-2 L2A | Clear, partly cloudy, and edge-of-AOI scenes. |
+| Source             | Sample target                                                      |
+| ------------------ | ------------------------------------------------------------------ |
+| Sentinel-2 L2A     | Clear, partly cloudy, and edge-of-AOI scenes.                      |
 | ResourceSat LISS-4 | Multiple scenes if needed to cover AOI; clear and cloudy examples. |
-| ResourceSat LISS-3 | Clear and cloudy examples with SWIR. |
-| ResourceSat AWiFS | Regional/coarse sample for coverage and metadata. |
-| Landsat 8/9 C2 L2 | Clear and cloudy examples with QA_PIXEL. |
+| ResourceSat LISS-3 | Clear and cloudy examples with SWIR.                               |
+| ResourceSat AWiFS  | Regional/coarse sample for coverage and metadata.                  |
+| Landsat 8/9 C2 L2  | Clear and cloudy examples with QA_PIXEL.                           |
 
 Acceptance:
 
@@ -664,11 +664,11 @@ Acceptance:
 
 Profiles:
 
-| Source ID | Key rules |
-|---|---|
-| `resourcesat-2a-liss4-mx70-l2` | Green, Red, NIR only; no NDMI/NDBI/NDRE/RECI. |
-| `resourcesat-2a-liss3-boa` | Green, Red, NIR, SWIR; no red-edge indices. |
-| `resourcesat-2a-awifs-boa` | Coarse regional product; field suitability warnings. |
+| Source ID                        | Key rules                                            |
+| -------------------------------- | ---------------------------------------------------- |
+| `resourcesat-2a-liss4-mx70-l2` | Green, Red, NIR only; no NDMI/NDBI/NDRE/RECI.        |
+| `resourcesat-2a-liss3-boa`     | Green, Red, NIR, SWIR; no red-edge indices.          |
+| `resourcesat-2a-awifs-boa`     | Coarse regional product; field suitability warnings. |
 
 Acceptance:
 
@@ -1128,40 +1128,40 @@ Phase 7 is complete when the on-prem environment is deployed, secured, monitored
 
 ## 15. Documentation deliverables by phase
 
-| Phase | Required docs |
-|---|---|
-| Phase 0 | AOI definition, provider access notes, sample-product matrix, raw-lake storage sizing, ResourceSat AC feasibility note. |
-| Phase 1 | VM setup runbook, deployment runbook, schema notes, provider execution-policy notes, secret management notes, backup/restore runbook. |
-| Phase 2 | Sentinel-2 adapter notes, processing profile, field-index API examples, COG validation report. |
-| Phase 3 | Bhoonidhi adapter notes, ResourceSat instrument profiles, AC/mask validation report. |
-| Phase 4 | Landsat processing profile, cross-source best-scene selection spec, time-series and progressive NDVI API examples. |
+| Phase   | Required docs                                                                                                                               |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 0 | AOI definition, provider access notes, sample-product matrix, raw-lake storage sizing, ResourceSat AC feasibility note.                     |
+| Phase 1 | VM setup runbook, deployment runbook, schema notes, provider execution-policy notes, secret management notes, backup/restore runbook.       |
+| Phase 2 | Sentinel-2 adapter notes, processing profile, field-index API examples, COG validation report.                                              |
+| Phase 3 | Bhoonidhi adapter notes, ResourceSat instrument profiles, AC/mask validation report.                                                        |
+| Phase 4 | Landsat processing profile, cross-source best-scene selection spec, time-series and progressive NDVI API examples.                          |
 | Phase 5 | Scheduler operations, retry procedure, provider quota/backpressure procedure, raw lifecycle governance procedure, operator dashboard guide. |
-| Phase 6 | SAR processing design, SAR output definitions, advanced source activation notes. |
-| Phase 7 | Production runbook, security checklist, DR checklist, load-test report. |
+| Phase 6 | SAR processing design, SAR output definitions, advanced source activation notes.                                                            |
+| Phase 7 | Production runbook, security checklist, DR checklist, load-test report.                                                                     |
 
 ## 16. Open decisions and clarification items
 
 These should be resolved or tracked before or during Phase 0.
 
-| Item | Needed by | Why it matters |
-|---|---|---|
-| Exact Bangalore AOI polygon | Phase 0 | Provider search, storage sizing, and backfill scope. |
-| Clear-season demo window | Phase 0 | Sample product selection and initial validation. |
-| CDSE credentials | Phase 2 | Sentinel-2 vertical slice. |
-| USGS/M2M credentials | Phase 4 | Landsat integration. |
-| Earthdata credentials | Later Phase 4/6 | MODIS/future context products. |
-| pgSTAC adopt/decline | Phase 1 | Blocks schema design, TiTiler-PgSTAC integration, and catalog strategy. |
-| CI/CD platform and image registry | Phase 1 | Needed for pinned builds, migration validation, and dev/prod parity. |
-| ResourceSat ancillary data source | Phase 3 | 6S/Py6S feasibility. |
-| Initial ResourceSat validation tolerance | Phase 3 | Product exposure gate. |
-| ResourceSat/Sentinel-2 overlap validation window | Phase 3 | Defines the clear dates and fields used for ResourceSat cross-validation. |
-| Dev-network exposure policy | Phase 2 | Clarifies that Phases 2 to 6 are private/dev unless Phase 7 hardening is complete. |
-| Production VM spec and static IP | Phase 7, but size in Phase 0 | On-prem deployment and provider whitelisting. |
-| Expected users and query volume | Phase 1/7 | API sizing, rate limits, and load testing. |
-| Processed COG retention period | Phase 1/5 | MinIO lifecycle and storage planning. |
-| Raw lifecycle cleanup scope, if any | Phase 5/7 | Default is no raw cleanup; enabling cleanup affects governance, storage, and restore assumptions. |
-| Provider execution-policy values | Phase 1 and each adapter phase | Needed to enforce request limits, throttling, quotas, retries, staging, and concurrency. |
-| Operator dashboard MVP scope | Phase 1/5 | Whether to build minimal internal UI or rely on Flower/Grafana first. |
+| Item                                             | Needed by                      | Why it matters                                                                                    |
+| ------------------------------------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------- |
+| Exact Bangalore AOI polygon                      | Phase 0                        | Provider search, storage sizing, and backfill scope.                                              |
+| Clear-season demo window                         | Phase 0                        | Sample product selection and initial validation.                                                  |
+| CDSE credentials                                 | Phase 2                        | Sentinel-2 vertical slice.                                                                        |
+| USGS/M2M credentials                             | Phase 4                        | Landsat integration.                                                                              |
+| Earthdata credentials                            | Later Phase 4/6                | MODIS/future context products.                                                                    |
+| pgSTAC adopt/decline                             | Phase 1                        | Blocks schema design, TiTiler-PgSTAC integration, and catalog strategy.                           |
+| CI/CD platform and image registry                | Phase 1                        | Needed for pinned builds, migration validation, and dev/prod parity.                              |
+| ResourceSat ancillary data source                | Phase 3                        | 6S/Py6S feasibility.                                                                              |
+| Initial ResourceSat validation tolerance         | Phase 3                        | Product exposure gate.                                                                            |
+| ResourceSat/Sentinel-2 overlap validation window | Phase 3                        | Defines the clear dates and fields used for ResourceSat cross-validation.                         |
+| Dev-network exposure policy                      | Phase 2                        | Clarifies that Phases 2 to 6 are private/dev unless Phase 7 hardening is complete.                |
+| Production VM spec and static IP                 | Phase 7, but size in Phase 0   | On-prem deployment and provider whitelisting.                                                     |
+| Expected users and query volume                  | Phase 1/7                      | API sizing, rate limits, and load testing.                                                        |
+| Processed COG retention period                   | Phase 1/5                      | MinIO lifecycle and storage planning.                                                             |
+| Raw lifecycle cleanup scope, if any              | Phase 5/7                      | Default is no raw cleanup; enabling cleanup affects governance, storage, and restore assumptions. |
+| Provider execution-policy values                 | Phase 1 and each adapter phase | Needed to enforce request limits, throttling, quotas, retries, staging, and concurrency.          |
+| Operator dashboard MVP scope                     | Phase 1/5                      | Whether to build minimal internal UI or rely on Flower/Grafana first.                             |
 
 ## 17. Recommended immediate next actions
 

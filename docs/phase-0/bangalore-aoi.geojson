@@ -2,6 +2,21 @@
   "type": "FeatureCollection",
   "name": "akasha_phase0_bangalore_aoi",
   "bbox": [77.023647, 12.537266, 78.131561, 13.61645],
+  "phase0_inputs": {
+    "crs": "EPSG:4326",
+    "authoritative_aoi": "bangalore_60km_geodesic_aoi",
+    "provider_search_envelope": "bangalore_60km_envelope_bbox",
+    "demo_date_range": {
+      "start": "2026-01-01",
+      "end": "2026-06-30"
+    },
+    "clear_season_sample_window": {
+      "start": "2026-01-15",
+      "end": "2026-04-15"
+    },
+    "sample_field_policy": "Use the three user-provided real field polygons for Phase 0 processing and validation. No synthetic small-field polygon is included.",
+    "minimum_field_case_note": "The smallest provided sample field is approximately 18.4683 ha. Sub-hectare small-field validation remains pending unless a real small-field polygon is supplied later."
+  },
   "features": [
     {
       "type": "Feature",
@@ -21,12 +36,109 @@
     },
     {
       "type": "Feature",
-      "id": "bangalore_60km_bbox",
+      "id": "bangalore_60km_geodesic_aoi",
       "properties": {
-        "role": "aoi_validation_bbox",
-        "description": "User-provided bounding box for Bangalore 60 km Phase 0 sample searches.",
+        "role": "aoi_polygon",
+        "description": "Authoritative Phase 0 Bangalore AOI derived as a geodesic 60 km buffer around the provided center point.",
         "crs": "EPSG:4326",
-        "source": "user_provided",
+        "radius_km": 60,
+        "buffer_method": "geodesic_forward_azimuth",
+        "earth_radius_m": 6371008.8,
+        "segments": 72,
+        "derived_from": "bangalore_60km_center",
+        "source": "derived_from_user_provided_center",
+        "captured_for": "phase_0_sample_product_spike"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.57760371, 13.616450395],
+            [77.625991177, 13.614392531],
+            [77.674007911, 13.608234704],
+            [77.721286079, 13.598024099],
+            [77.767463624, 13.583838941],
+            [77.812187088, 13.565787889],
+            [77.855114368, 13.544009185],
+            [77.89591737, 13.518669573],
+            [77.934284554, 13.489963003],
+            [77.969923331, 13.458109113],
+            [78.002562307, 13.423351527],
+            [78.031953351, 13.385955961],
+            [78.057873477, 13.346208163],
+            [78.080126511, 13.304411703],
+            [78.098544552, 13.260885633],
+            [78.112989201, 13.215962027],
+            [78.123352558, 13.16998343],
+            [78.12955798, 13.123300232],
+            [78.131560592, 13.07626799],
+            [78.129347558, 13.029244714],
+            [78.122938108, 12.98258814],
+            [78.112383313, 12.936653018],
+            [78.097765633, 12.891788415],
+            [78.079198226, 12.848335087],
+            [78.056824029, 12.806622895],
+            [78.030814625, 12.766968331],
+            [78.0013689, 12.729672134],
+            [77.968711504, 12.695017033],
+            [77.933091127, 12.663265629],
+            [77.894778605, 12.634658431],
+            [77.854064868, 12.60941206],
+            [77.811258745, 12.587717631],
+            [77.766684647, 12.569739327],
+            [77.72068014, 12.55561318],
+            [77.673593422, 12.545446055],
+            [77.625780735, 12.539314857],
+            [77.57760371, 12.537265959],
+            [77.529426685, 12.539314857],
+            [77.481613998, 12.545446055],
+            [77.43452728, 12.55561318],
+            [77.388522773, 12.569739327],
+            [77.343948675, 12.587717631],
+            [77.301142552, 12.60941206],
+            [77.260428814, 12.634658431],
+            [77.222116293, 12.663265629],
+            [77.186495916, 12.695017033],
+            [77.15383852, 12.729672134],
+            [77.124392795, 12.766968331],
+            [77.098383391, 12.806622895],
+            [77.076009194, 12.848335087],
+            [77.057441786, 12.891788415],
+            [77.042824107, 12.936653018],
+            [77.032269312, 12.98258814],
+            [77.025859861, 13.029244714],
+            [77.023646828, 13.07626799],
+            [77.02564944, 13.123300232],
+            [77.031854862, 13.16998343],
+            [77.042218219, 13.215962027],
+            [77.056662868, 13.260885633],
+            [77.075080909, 13.304411703],
+            [77.097333943, 13.346208163],
+            [77.123254069, 13.385955961],
+            [77.152645113, 13.423351527],
+            [77.185284089, 13.458109113],
+            [77.220922866, 13.489963003],
+            [77.25929005, 13.518669573],
+            [77.300093052, 13.544009185],
+            [77.343020332, 13.565787889],
+            [77.387743796, 13.583838941],
+            [77.433921341, 13.598024099],
+            [77.481199509, 13.608234704],
+            [77.529216243, 13.614392531],
+            [77.57760371, 13.616450395]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "bangalore_60km_envelope_bbox",
+      "properties": {
+        "role": "aoi_envelope_bbox",
+        "description": "Bounding envelope for the derived 60 km geodesic AOI, retained for provider search convenience and validation.",
+        "crs": "EPSG:4326",
+        "source": "derived_from_user_provided_center_radius",
+        "derived_from": "bangalore_60km_geodesic_aoi",
         "captured_for": "phase_0_sample_product_spike"
       },
       "geometry": {
@@ -38,6 +150,108 @@
             [78.131561, 13.61645],
             [77.023647, 13.61645],
             [77.023647, 12.537266]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "bangalore_sample_field_1",
+      "properties": {
+        "role": "test_field",
+        "field_class": "representative_real_sample",
+        "description": "User-provided Phase 0 sample field for processing and validation.",
+        "crs": "EPSG:4326",
+        "source": "user_provided",
+        "synthetic": false,
+        "area_ha_approx": 22.7457,
+        "inside_authoritative_aoi": true,
+        "captured_for": "phase_0_sample_product_spike"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.56493593, 13.084307633],
+            [77.565092989, 13.084847993],
+            [77.56751287, 13.0840387],
+            [77.568180114, 13.085910018],
+            [77.56715624, 13.087366723],
+            [77.566247408, 13.086615961],
+            [77.56370498, 13.088263152],
+            [77.564809383, 13.090313722],
+            [77.563601443, 13.091501476],
+            [77.561542191, 13.087501187],
+            [77.562945703, 13.086671988],
+            [77.56493593, 13.084307633]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "bangalore_sample_field_2",
+      "properties": {
+        "role": "test_field",
+        "field_class": "representative_real_sample",
+        "description": "User-provided Phase 0 sample field for processing and validation.",
+        "crs": "EPSG:4326",
+        "source": "user_provided",
+        "synthetic": false,
+        "area_ha_approx": 35.1579,
+        "inside_authoritative_aoi": true,
+        "captured_for": "phase_0_sample_product_spike"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.593086745, 13.120456911],
+            [77.596673634, 13.120140838],
+            [77.597579653, 13.122432353],
+            [77.599053625, 13.121787043],
+            [77.598986011, 13.12363078],
+            [77.59902658, 13.125487671],
+            [77.600432938, 13.125342808],
+            [77.600906231, 13.127765966],
+            [77.5996351, 13.128121536],
+            [77.599269987, 13.126988978],
+            [77.597282155, 13.127923997],
+            [77.593086745, 13.120456911]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "bangalore_sample_field_3",
+      "properties": {
+        "role": "test_field",
+        "field_class": "representative_real_sample",
+        "description": "User-provided Phase 0 sample field for processing and validation.",
+        "crs": "EPSG:4326",
+        "source": "user_provided",
+        "synthetic": false,
+        "area_ha_approx": 18.4683,
+        "inside_authoritative_aoi": true,
+        "captured_for": "phase_0_sample_product_spike"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.61116011, 13.193314151],
+            [77.61301571, 13.193617467],
+            [77.614245488, 13.192322406],
+            [77.615061157, 13.195853263],
+            [77.614258037, 13.19591435],
+            [77.614383524, 13.19670848],
+            [77.61238983, 13.197083025],
+            [77.612361763, 13.197464605],
+            [77.60972957, 13.197938143],
+            [77.609429156, 13.196406107],
+            [77.611760937, 13.195876856],
+            [77.61116011, 13.193314151]
           ]
         ]
       }
