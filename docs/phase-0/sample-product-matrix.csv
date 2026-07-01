@@ -1,0 +1,11 @@
+provider,source,instrument,product_id,product_level,acquisition_date,scene_type,provider_link,local_or_vm,raw_path,checksum,raw_size_bytes,archive_format,file_structure_summary,metadata_files,band_files,band_resolutions,crs,scale_offset,nodata_values,cloud_qa_assets,scene_footprint,download_status,download_error,processing_notes
+CDSE,Sentinel-2 L2A,MSI,,,,clear,,,,,,,,,,,,,,,,pending,,
+CDSE,Sentinel-2 L2A,MSI,,,,partly_cloudy,,,,,,,,,,,,,,,,pending,,
+CDSE,Sentinel-2 L2A,MSI,,,,edge_of_aoi,,,,,,,,,,,,,,,,pending,,
+Bhoonidhi/NRSC,ResourceSat-2A LISS-4,LISS-4,,,,clear,,,,,,,,,,,,,,,,pending_azure_vm,,
+Bhoonidhi/NRSC,ResourceSat-2A LISS-4,LISS-4,,,,cloudy,,,,,,,,,,,,,,,,pending_azure_vm,,
+Bhoonidhi/NRSC,ResourceSat-2A LISS-3,LISS-3,,,,clear,,,,,,,,,,,,,,,,pending_azure_vm,,
+Bhoonidhi/NRSC,ResourceSat-2A LISS-3,LISS-3,,,,cloudy,,,,,,,,,,,,,,,,pending_azure_vm,,
+Bhoonidhi/NRSC,ResourceSat-2A AWiFS,AWiFS,,,,regional_metadata,,,,,,,,,,,,,,,,pending_azure_vm,,
+USGS/M2M,Landsat 8/9 C2 L2,OLI/TIRS,,,,clear,,,,,,,,,,,,,,,,pending,,
+USGS/M2M,Landsat 8/9 C2 L2,OLI/TIRS,,,,cloudy,,,,,,,,,,,,,,,,pending,,

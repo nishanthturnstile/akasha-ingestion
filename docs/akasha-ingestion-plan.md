@@ -3,13 +3,13 @@
 
 ## 1. Final Direction
 
-Akasha will be built as an **EOSDA Crop Monitoring–style backend intelligence platform for Indian agricultural use cases**, but the first major deliverable is **not the UI**. The first deliverable is the **satellite data ingestion, processing, and vegetation-index generation pipeline**.
+Akasha will be built first as an **on-premises satellite data ingestion and processing platform** for Indian agricultural use cases. It should behave like a self-hosted satellite data lake / "one lake" for raw provider packages, extracted assets, analysis-ready raster layers, derived vegetation indices, QA outputs, and query-ready analytics. The first major deliverable is **not the UI**. The first deliverable is the **satellite data ingestion, processing, and vegetation-index generation pipeline**.
 
 The UI will exist as a separate application. That UI will allow users to draw/select a field polygon on a normal base map such as ArcGIS, Google satellite imagery, or another map provider. Once the user selects a field and chooses an index such as NDVI or NDMI, the UI will send the field coordinates to this ingestion/index service. This service will then return the required index layer, field-level statistics, quality score, and related metadata.
 
 The core goal is:
 
-> Build a configurable, on-premises, low-cost satellite data pipeline that can ingest approved satellite data sources, process them into analysis-ready raster layers, calculate vegetation indices, and expose the results through APIs and TiTiler-compatible raster outputs.
+> Build a configurable, on-premises, low-cost satellite data lake and processing pipeline that can ingest approved satellite data sources, retain original provider raw packages by default, extract and catalog all available assets/bands, process them into analysis-ready raster layers, calculate vegetation indices and other derived products, and expose query-ready results through APIs and TiTiler-compatible raster outputs.
 
 The uploaded satellite catalogue already identifies 20 approved satellite platforms/sensors, including ISRO/NRSC sources, Sentinel, Landsat, MODIS, SAR sources, and gated commercial/high-resolution sources. The catalogue also defines source slugs, provider adapters, product state, resolution, revisit cadence, band availability, and index support.
 
@@ -29,12 +29,12 @@ The uploaded satellite catalogue already identifies 20 approved satellite platfo
 | MVP AOI                         | Bangalore + approximately 60 km radius                                                        |
 | AOI configurability             | Must support future regions such as Kolkata or any custom AOI                                 |
 | MVP historical backfill         | 6 months                                                                                      |
-| Production historical retention | Minimum 1 year raw-data retention                                                             |
-| Raw data after retention        | Delete raw data after retention window, but retain metadata and derived outputs as configured |
+| Raw data retention              | Configurable from day one; original provider raw packages are retained by default and are not deleted unless an operator explicitly enables lifecycle cleanup |
+| Production storage planning     | Size for raw data growth first; lifecycle cleanup is opt-in, source/AOI/environment scoped, pre-check gated, and audited |
 | Initial resolution baseline     | Per-source native grids (not one value): Sentinel-2 10 m for NDVI/MSAVI and 20 m for red-edge/SWIR indices; ResourceSat LISS-4 5–5.8 m (VNIR only), LISS-3 23.5 m, AWiFS 56 m; Landsat 30 m. Do not upsample coarse data to imply false precision |
 | Higher-resolution data          | Architecturally supported, but enabled later based on cost/license                            |
 | UI responsibility               | Separate project                                                                              |
-| This project responsibility     | Ingestion, processing, index generation, tile/API serving                                     |
+| This project responsibility     | Ingestion data lake, provider jobs, raw/extracted/ARD/derived storage, processing, index generation, tile/API serving |
 | Raw satellite visual display    | Not required for end users                                                                    |
 | True color/false color imagery  | Optional internal QA only                                                                     |
 | Initial indices (source-aware)  | NDVI, MSAVI from all optical MVP sources; NDMI, NDBI where SWIR exists (Sentinel-2, ResourceSat LISS-3/AWiFS, Landsat); NDRE, RECI only from Red-Edge sources (Sentinel-2 — ResourceSat has no Red Edge). See §11 Source×Index matrix |
@@ -59,27 +59,37 @@ This project must build:
 4. Historical backfill for the last 6 months for MVP.
 5. Automated scheduled sync based on satellite revisit cadence.
 6. Raw data download and storage.
-7. Raw data extraction and metadata parsing.
-8. Pre-processing pipeline.
-9. Band extraction and band mapping.
-10. Cloud/quality masking.
-11. Analysis-ready raster generation.
-12. Vegetation index calculation.
-13. GeoTIFF / Cloud Optimized GeoTIFF generation.
-14. TiTiler-compatible tile serving.
-15. Field polygon clipping.
-16. Field-level statistics API.
-17. Quality/confidence scoring.
-18. Job monitoring, retries, and failure debugging.
-19. On-prem deployment package.
-20. Per-source atmospheric correction (vendor SR; custom DOS/6S for ResourceSat).
-21. Per-sensor cloud/shadow masking (S2 SCL, Landsat QA_PIXEL, ResourceSat custom).
-22. Multi-scene coverage mosaicking and best-scene selection service.
-23. Provider order/staging state machine and download integrity (checksums, resume, quotas).
-24. Multi-provider credentials/secrets (Bhoonidhi/NRSC, CDSE, USGS, Earthdata).
-25. External API authentication, rate limiting, and signed tile/stats URLs.
-26. License/exposure enforcement before any source is served publicly.
-27. Output provenance/versioning (AC, mask, formula versions) for reproducibility.
+7. Durable raw lake registration with checksum, lineage, provider product ID, and no deletion unless lifecycle cleanup is explicitly enabled.
+8. Raw data extraction and metadata parsing.
+9. Inventory and extraction of all available provider assets/bands, not only the bands needed for the first index.
+10. Pre-processing pipeline.
+11. Band role mapping for supported indices and processing profiles.
+12. Cloud/quality masking.
+13. Analysis-ready raster generation.
+14. Vegetation index calculation.
+15. GeoTIFF / Cloud Optimized GeoTIFF generation.
+16. TiTiler-compatible tile serving.
+17. Field polygon clipping.
+18. Field-level statistics API.
+19. Six-month progressive NDVI/time-series analysis for selected plots.
+20. Quality/confidence scoring.
+21. Job monitoring, retries, and failure debugging.
+22. On-prem deployment package.
+23. Per-source atmospheric correction (vendor SR; custom DOS/6S for ResourceSat).
+24. Per-sensor cloud/shadow masking (S2 SCL, Landsat QA_PIXEL, ResourceSat custom).
+25. Multi-scene coverage mosaicking and best-scene selection service.
+26. Provider order/staging state machine and download integrity (checksums, resume, quotas).
+27. Provider execution policies: auth model, request rate, concurrency, throttling, retry/backoff, quota, staging, URL expiry, and checksum behavior.
+28. Multi-provider credentials/secrets (Bhoonidhi/NRSC, CDSE, USGS, Earthdata).
+29. External API authentication, rate limiting, and signed tile/stats URLs.
+30. License/exposure enforcement before any source is served publicly.
+31. Output provenance/versioning (AC, mask, formula versions) for reproducibility.
+32. Display normalization profiles for each index and source where needed.
+33. Color-ramp / legend generation for map rendering.
+34. Configurable threshold profiles for vegetation-health classes.
+35. Class-area statistics per field, such as area and percentage in each health class.
+36. Clear separation between index math, visualization classes, and agronomic interpretation.
+37. Future-ready integration points for weather, soil, crop calendar, and field-observation data.
 
 ## 3.2 Out of Scope for MVP
 
@@ -95,12 +105,13 @@ These should not block the first working pipeline:
 8. Complex crop-specific agronomy models.
 9. Automated field-boundary detection.
 10. Real-time live monitoring.
+11. Validated disease, nutrient-deficiency, water-stress, yield, or prescription recommendations without external agronomic calibration data.
 
 ---
 
 ## 4. Target Architecture
 
-The system should be designed as a **satellite data processing backend service**.
+The system should be designed as a **satellite ingestion data lake plus processing and serving backend**.
 
 ```text
 External Providers
@@ -125,8 +136,8 @@ Akasha Ingestion Service
         ↓
 
 Storage + Processing
-  ├── Raw Product Storage
-  ├── Extracted Band Storage
+  ├── Raw Lake / Provider Package Storage
+  ├── Extracted Asset + All-Band Inventory
   ├── Pre-processing Pipeline
   ├── Cloud / Quality Masking
   ├── Index Calculation Engine
@@ -139,7 +150,7 @@ Serving Layer
   ├── TiTiler
   ├── Field Analytics API
   ├── Zonal Statistics API
-  ├── Time-Series API
+  ├── Time-Series / Progressive NDVI API
   └── Internal Operator Dashboard
 
         ↓
@@ -229,14 +240,14 @@ The catalogue confirms multispectral sources are suitable for vegetation indices
 
 ### 6.1 Raw Data
 
-| Environment     | Raw Data Retention                                             |
-| --------------- | -------------------------------------------------------------- |
-| MVP             | 6 months                                                       |
-| Production      | Rolling 12 months minimum                                      |
-| After retention | Delete raw product files                                       |
-| Before deletion | Ensure derived outputs and metadata are successfully generated |
+| Environment | Raw Data Retention |
+| ----------- | ------------------ |
+| MVP | Retain original provider raw packages by default. |
+| Production | Retain original provider raw packages by default; storage sizing must assume raw data growth until an operator enables cleanup. |
+| Cleanup behavior | Disabled by default. Lifecycle cleanup can be enabled only by explicit operator configuration. |
+| Before any cleanup | Confirm derived outputs, metadata, checksums, lineage, provenance, and audit requirements are complete. |
 
-Raw data is expensive to store, so a 12-month rolling retention policy is acceptable. However, once raw data is deleted, reprocessing older outputs will require re-downloading from the provider if still available.
+Akasha's raw zone is the durable source of truth. Whatever the provider supplies — ZIP, SAFE package, GeoTIFF bundle, tar archive, staged download folder, or other native product — should be stored in its original form with checksum, provider product ID, acquisition metadata, source ID, and ingestion job lineage. Raw deletion is not automatic. If storage pressure later requires cleanup, it must be opt-in, scoped by source/AOI/environment, pre-check gated, and audit logged.
 
 ### 6.2 Derived Outputs
 
@@ -250,59 +261,60 @@ Recommended policy:
 | Index COGs             | 1–3 years if storage permits |
 | Field statistics       | Long-term                    |
 | Cloud/quality metadata | Long-term                    |
-| Provenance + versions (AC/mask/formula) | Long-term       |
+| Provenance + versions (AC/mask/formula/display/threshold) | Long-term |
 | Checksums              | Long-term                    |
-| Minimal ARD/bands (optional) | Longer than raw ZIPs to enable reprocessing |
-| Raw ZIP/native files   | 12 months production rolling |
+| Minimal ARD/bands | Long-term where storage permits to accelerate reprocessing |
+| Raw ZIP/native files   | Retained by default; cleanup only if explicitly enabled |
 
-This gives you a good balance: raw storage is controlled, but useful analytics history remains available. Because raw deletion blocks re-running a fixed cloud mask or formula, always retain provenance, checksums, provider product IDs, and processing versions — and optionally keep minimal ARD/band assets longer than the raw ZIPs so outputs can be regenerated without re-downloading.
+This gives the platform a true ingestion-lake posture: original provider data remains locally available for reprocessing, audits, new formulas, and future validation. Storage growth is managed through sizing, monitoring, backup tiering, and explicit lifecycle policy decisions rather than silent deletion.
 
 ---
 
 ## 7. Storage Structure
 
-Use MinIO buckets or folder prefixes like this:
+Use MinIO buckets or folder prefixes as explicit data-lake zones:
 
 ```text
 akasha-data/
-  raw/
-    provider/
-      satellite/
-        product_id/
-          original.zip
+  raw/                         # bronze: immutable/native provider packages
+    provider/source_id/product_id/
+      original.*
+      checksum.txt
+      provider-manifest.*
 
-  extracted/
-    provider/
-      satellite/
-        product_id/
-          bands/
-          metadata/
+  extracted/                   # unpacked product assets and all-band inventory
+    provider/source_id/product_id/
+      bands/
+      masks/
+      metadata/
+      asset-inventory.json
 
-  ard/
-    provider/
-      satellite/
-        product_id/
-          surface_reflectance/
-          masks/
+  ard/                         # silver: analysis-ready data
+    provider/source_id/product_id/
+      surface_reflectance/
+      aligned_bands/
+      masks/
 
-  indices/
-    provider/
-      satellite/
-        product_id/
-          ndvi.cog.tif
-          ndre.cog.tif
-          msavi.cog.tif
-          reci.cog.tif
-          ndmi.cog.tif
-          ndbi.cog.tif
+  indices/                     # gold: derived per-scene index COGs
+    provider/source_id/product_id/
+      ndvi.cog.tif
+      ndre.cog.tif
+      msavi.cog.tif
+      reci.cog.tif
+      ndmi.cog.tif
+      ndbi.cog.tif
 
   qa/
-    provider/
-      satellite/
-        product_id/
-          cloud_mask.cog.tif
-          usable_pixel_mask.cog.tif
-          preview.png
+    provider/source_id/product_id/
+      cloud_mask.cog.tif
+      usable_pixel_mask.cog.tif
+      preview.png
+
+  analytics/
+    field_id/
+      index/
+        timeseries.json
+        progressive-ndvi.json
 
   reports/
     field_id/
@@ -317,7 +329,8 @@ Do not generate permanent per-field TIFFs by default. That will create too many 
 1. Generate one index COG per scene (stored under the per-`product_id` path above).
 2. At query time, pick the best scene covering the field (see §8.3 best-scene selection) and clip/calculate field-level stats on demand.
 3. Serve AOI-wide views via TiTiler MosaicJSON over the per-scene COGs; pre-built AOI date-mosaics are an optional cached layer, not the MVP baseline.
-4. Cache field-level results only when needed.
+4. Cache field-level results and progressive time-series only when needed.
+5. Every object in `raw/`, `extracted/`, `ard/`, `indices/`, and `qa/` must be registered in metadata with lineage from provider product to derived output.
 
 ---
 
@@ -340,12 +353,12 @@ Steps:
   4. Download raw products.
   5. Store raw products in MinIO.
   6. Extract product metadata.
-  7. Extract required bands.
+  7. Extract and inventory all available assets/bands.
   8. Apply correction/masking/pre-processing.
   9. Generate analysis-ready rasters.
   10. Calculate required indices.
   11. Generate COG outputs.
-  12. Register outputs in PostGIS metadata table.
+  12. Register raw, extracted, ARD, QA, and derived outputs in PostGIS/pgSTAC metadata tables.
   13. Expose through TiTiler/API.
 ```
 
@@ -365,7 +378,7 @@ For each active satellite source:
   8. Mark job success/failure.
 ```
 
-The scheduler must be source-aware. A daily satellite, 5-day satellite, 6-day SAR source, and 16-day Landsat source should not be treated with the same sync frequency.
+The scheduler must be source-aware and provider-policy-aware. A daily satellite, 5-day satellite, 6-day SAR source, and 16-day Landsat source should not be treated with the same sync frequency. Provider execution must also respect configured requests per minute, concurrent downloads, staging/polling limits, retry/backoff rules, daily quotas, URL expiry, and provider-specific restrictions.
 
 ## 8.3 Best-Scene Selection (field-index queries)
 
@@ -390,6 +403,25 @@ Given (field geometry, index, requested date):
 
 This rule is the single source of truth for what `/analytics/field-index` returns; two implementations must produce identical results for the same inputs.
 
+## 8.4 Provider Execution Policy
+
+Each provider adapter must run under a versioned execution policy. This policy is configuration, not hard-coded worker behavior.
+
+| Policy field | Purpose |
+| ------------ | ------- |
+| `auth_model` | API key, OAuth2, session cookie, signed URL, mTLS, or manual token. |
+| `requests_per_minute` | Provider API request limit. |
+| `max_concurrent_searches` | Search concurrency allowed for this provider. |
+| `max_concurrent_downloads` | Download concurrency allowed for this provider. |
+| `daily_quota` | Optional daily scene/order/download cap. |
+| `retry_policy` | Retry count, backoff, jitter, and retryable status/error codes. |
+| `staging_policy` | Order, poll, expiry, and re-stage rules for providers that do not direct-download. |
+| `checksum_policy` | Required checksum type and failure handling. |
+| `availability_lag` | Delay between acquisition and expected provider availability. |
+| `priority_class` | Backfill, routine sync, or UI-critical priority. |
+
+Workers should enforce these policies with provider/source-specific queues, concurrency controls, and backpressure so one large backfill cannot starve routine sync or UI-facing analytics.
+
 ---
 
 ## 9. Pre-processing Requirements
@@ -402,8 +434,8 @@ Required steps:
 2. Read metadata and product manifest.
 3. Validate projection and coordinate system.
 4. Validate acquisition date/time.
-5. Validate band availability.
-6. Extract required bands.
+5. Validate and inventory all available product assets and bands.
+6. Extract all available bands/assets that are part of the configured product profile; mark which bands are required for each downstream index.
 7. Apply the source's radiometric/atmospheric-correction profile to produce surface reflectance (see §9.1). Never feed TOA/DN values into indices.
 8. Prefer vendor analysis-ready surface reflectance / BOA where available; otherwise run the configured correction and tag the output with the AC method + version.
 9. Reproject to the platform processing CRS — UTM zone 43N (EPSG:32643) for the Bangalore AOI; keep raw assets in their native CRS; API field geometry is accepted in EPSG:4326.
@@ -420,6 +452,10 @@ Required steps:
 Important rule:
 
 > Never calculate NDVI/NDMI/NDRE directly from unvalidated raw pixels. The data must first be corrected, masked, aligned, and converted into a consistent analysis-ready format.
+
+All-band rule:
+
+> The ingestion lake should preserve the complete provider package and inventory all available assets/bands. Processing profiles may use only the subset needed for an index, but the platform should not discard other available bands during normal ingestion.
 
 ### 9.1 Atmospheric correction profiles (per source)
 
@@ -566,6 +602,93 @@ SAR should be handled separately.
 
 SAR outputs should not be shown as NDVI replacement. They should be labelled clearly as SAR-derived indicators.
 
+## 11.4 Display Normalization and Color-Ramp Profiles
+
+The index engine produces scientific raster values. A separate visualization layer converts those values into display-friendly map tiles. Do not bake display classes into the raw index formula.
+
+Each supported index must have a versioned display profile:
+
+| Field | Purpose |
+| ----- | ------- |
+| `index_name` | NDVI, NDRE, MSAVI, RECI, NDMI, NDBI, etc. |
+| `value_domain` | Scientific value range, usually `-1..1` for normalized difference indices. |
+| `display_min` / `display_max` | Default visualization stretch; may differ from the full mathematical domain. |
+| `palette` | Ordered color ramp used by TiTiler or the API. |
+| `nodata_color` | Transparent or explicit no-data color. |
+| `water_non_vegetation_color` | Optional class color for negative or near-zero vegetation-index values. |
+| `version` | Profile version for reproducibility. |
+
+Default NDVI display profile for MVP:
+
+| Range | Display class | Color intent |
+| ----- | ------------- | ------------ |
+| `-1.00..0.00` | Water / non-vegetation | Blue |
+| `0.00..0.15` | Bare soil / very sparse vegetation | Red |
+| `0.15..0.30` | Poor vegetation | Orange |
+| `0.30..0.45` | Low to medium growth | Yellow |
+| `0.45..0.60` | Moderate growth | Light green |
+| `0.60..0.75` | Healthy crop | Green |
+| `0.75..1.00` | Very dense / highly healthy canopy | Dark green |
+
+These are visualization defaults, not universal agronomic truth. NDRE, MSAVI, NDMI, and NDBI require their own profile because their interpretation differs from NDVI.
+
+## 11.5 Classification, Thresholding, and Class-Area Statistics
+
+Classification happens after the source-aware index COG has been generated and masked. It must be configuration-driven:
+
+```text
+surface reflectance bands
+  -> mask/cloud/no-data filtering
+  -> source-aware index COG
+  -> display normalization profile
+  -> threshold profile
+  -> class raster or dynamic tile classes
+  -> field zonal statistics + class-area statistics
+```
+
+Threshold profiles should be stored with:
+
+| Field | Purpose |
+| ----- | ------- |
+| `threshold_profile_id` | Stable ID such as `ndvi-default-v1`. |
+| `index_name` | Index the thresholds apply to. |
+| `crop` | Optional crop-specific override; `generic` for default. |
+| `season` | Optional seasonal override. |
+| `region` / `aoi_id` | Optional regional override. |
+| `source_id` | Optional sensor/source override when calibration differs. |
+| `classes` | Ordered class labels, min/max values, colors, and display order. |
+| `version` | Threshold profile version. |
+
+The field-index API should return both continuous statistics and class-area statistics:
+
+```json
+{
+  "classStatistics": [
+    {
+      "class": "Healthy crop",
+      "valueRange": [0.60, 0.75],
+      "areaSqM": 8420.5,
+      "areaPercentage": 48.2
+    }
+  ]
+}
+```
+
+For MVP, generic NDVI classes are acceptable for map readability. Crop-specific health classifications require calibration and should be labelled as `generic` until crop/season/region thresholds are approved.
+
+## 11.6 Crop-Health Interpretation Boundary
+
+Akasha MVP should report measured index values, quality, class areas, and source metadata. It should not over-claim that an index alone proves disease, nutrient deficiency, water stress, biomass, or yield.
+
+Interpretation should be layered:
+
+1. **Index layer:** NDVI/NDRE/MSAVI/NDMI/NDBI values from corrected and masked imagery.
+2. **Visualization layer:** color ramps and threshold classes for easy map reading.
+3. **Field analytics layer:** zonal statistics, class-area percentages, quality, and confidence.
+4. **Agronomic interpretation layer:** crop/season/weather/soil-aware rules and models, added after validation.
+
+Weather, soil, irrigation, crop calendar, and field-observation data are therefore future enrichment inputs, not blockers for the first index pipeline.
+
 ---
 
 ## 12. Output Format
@@ -612,6 +735,17 @@ The final output should not simply be a normal TIFF. The recommended output is:
     "rule": "quality_first",
     "validPixelCount": 1840
   },
+  "visualization": {
+    "displayProfile": "ndvi-default-v1",
+    "thresholdProfile": "ndvi-generic-v1",
+    "legend": [
+      {
+        "class": "Healthy crop",
+        "range": [0.60, 0.75],
+        "color": "#4caf50"
+      }
+    ]
+  },
   "statistics": {
     "min": 0.21,
     "max": 0.78,
@@ -621,10 +755,20 @@ The final output should not simply be a normal TIFF. The recommended output is:
     "usablePixelPercentage": 92.4,
     "cloudPercentage": 7.6
   },
+  "classStatistics": [
+    {
+      "class": "Healthy crop",
+      "valueRange": [0.60, 0.75],
+      "areaSqM": 8420.5,
+      "areaPercentage": 48.2
+    }
+  ],
   "versions": {
     "atmosphericCorrection": "vendor-L2A",
     "cloudMask": "scl-v1",
-    "formula": "ndvi-v1"
+    "formula": "ndvi-v1",
+    "displayProfile": "ndvi-default-v1",
+    "thresholdProfile": "ndvi-generic-v1"
   },
   "quality": {
     "status": "GOOD",
@@ -718,6 +862,39 @@ POST /analytics/field-timeseries
 
 Returns NDVI/NDMI/etc. trend across available dates.
 
+### 13.6 Progressive NDVI API
+
+For the MVP UI, progressive NDVI can be implemented as a time-series specialization:
+
+```text
+POST /analytics/field-progressive-ndvi
+```
+
+Input:
+
+```json
+{
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": []
+  },
+  "crs": "EPSG:4326",
+  "fromDate": "2026-01-01",
+  "toDate": "2026-06-30",
+  "preferredSources": ["sentinel-2-l2a", "resourcesat-2a-liss4-mx70-l2"],
+  "maxCloudPercentage": 20
+}
+```
+
+Response should include:
+
+1. Dated NDVI points with source, sensor, selected scene, resolution, cloud percentage, usable pixels, and quality.
+2. Six-month summary: min, max, mean, latest, first valid, latest-vs-first delta, trend slope, and unavailable periods.
+3. Quality and harmonization flags when multiple sensors contribute to the sequence.
+4. Legend/profile IDs used for display.
+
+This API supports the UI requirement to show how a selected plot's NDVI has progressed over the past six months without requiring the UI to know satellite-specific product details.
+
 ---
 
 ## 14. Database Model
@@ -751,6 +928,7 @@ satellite_sources
   processing_profile
   credential_ref              -- FK -> source_credentials
   license_profile
+  execution_policy_ref        -- FK -> provider_execution_policies
 
 source_credentials
   id
@@ -758,6 +936,23 @@ source_credentials
   secret_ref                  -- pointer to Vault/Docker secret (never the secret itself)
   rotated_at
   status
+
+provider_execution_policies
+  id
+  provider_adapter
+  source_id                   -- nullable FK -> satellite_sources for source-specific override
+  auth_model
+  requests_per_minute
+  max_concurrent_searches
+  max_concurrent_downloads
+  daily_quota
+  retry_policy_json
+  staging_policy_json
+  checksum_policy_json
+  availability_lag_hours
+  priority_class
+  enabled
+  version
 
 aoi_registry
   id
@@ -800,9 +995,15 @@ scene_assets                  -- per-band / per-file assets of a scene
   id
   scene_id                    -- FK -> provider_scenes
   asset_role                  -- band name / mask / metadata
+  asset_kind                  -- raw_member | band | mask | metadata | qa | derived
+  band_name                   -- provider band name where applicable
+  band_role                   -- blue | green | red | red_edge | nir | swir | thermal | pan | sar | other
   path
   checksum
   dtype
+  resolution
+  crs
+  metadata_json
 
 processing_jobs
   id
@@ -836,6 +1037,28 @@ raster_outputs                -- one per scene per index (per-scene COG baseline
   cloud_mask_version
   formula_version
   generated_at
+
+visualization_profiles
+  id
+  index_name
+  value_domain_min
+  value_domain_max
+  display_min
+  display_max
+  palette_json
+  nodata_color
+  version
+
+threshold_profiles
+  id
+  index_name
+  crop                        -- nullable; generic default when null/generic
+  season                      -- nullable
+  aoi_id                      -- nullable FK -> aoi_registry
+  source_id                   -- nullable FK -> satellite_sources
+  classes_json                -- ordered ranges, colors, labels
+  is_default
+  version
 
 aoi_mosaics                   -- optional cached AOI views / MosaicJSON
   id
@@ -877,7 +1100,36 @@ field_queries
   valid_pixel_count
   selection_reason
   stats_json
+  class_area_json
   quality_json
+  visualization_profile_id    -- FK -> visualization_profiles
+  threshold_profile_id        -- FK -> threshold_profiles
+  created_at
+
+field_timeseries_queries
+  id
+  field_geometry
+  crs
+  index_name
+  from_date
+  to_date
+  selection_policy_version
+  result_json
+  quality_json
+  created_at
+
+progressive_ndvi_summaries
+  id
+  field_timeseries_query_id   -- FK -> field_timeseries_queries
+  first_valid_value
+  latest_value
+  min_value
+  max_value
+  mean_value
+  delta_latest_vs_first
+  trend_slope
+  unavailable_periods_json
+  source_mix_json
   created_at
 ```
 
@@ -934,7 +1186,7 @@ Production must support:
 8. Job retry and resume.
 9. Operator dashboard/logs.
 10. Disk usage monitoring.
-11. Raw data retention cleanup job.
+11. Raw lifecycle policy controls, disabled by default, with explicit operator enablement required before cleanup.
 12. TLS/HTTPS for APIs.
 13. Access control for internal/admin APIs.
 14. No public access to raw MinIO buckets.
@@ -960,8 +1212,9 @@ Deliverables:
 * Confirm exact Bangalore AOI coordinates/polygon and a clear-season backfill window.
 * Confirm on-prem server specs and production static IP + Bhoonidhi whitelisting process.
 * Provision and validate all provider accounts: Bhoonidhi/NRSC, CDSE (Sentinel-2), USGS/M2M (Landsat), Earthdata (MODIS).
-* Confirm MVP source list, ± 7-day best-scene policy, cloud thresholds, and retention policy.
+* Confirm MVP source list, ± 7-day best-scene policy, cloud thresholds, provider execution policies, and raw lifecycle policy defaults.
 * **Spike: pull 3–5 sample products per source** and document what each actually delivers — product level (TOA/BOA/L2A/C2L2), ResourceSat BOA availability, native cloud masks, band layout, scene size — to ground the AC/masking effort and storage sizing.
+* Estimate storage assuming raw provider packages are retained by default and lifecycle cleanup is not enabled.
 
 Exit gate: every MVP source's real product characteristics documented; credentials proven; storage sizing input captured.
 
@@ -975,6 +1228,8 @@ Deliverables:
 
 * Docker Compose base; PostgreSQL/PostGIS; MinIO; FastAPI; Worker; Queue/scheduler; TiTiler.
 * Database schema per §14 (sources with catalogue §8 fields, AOI registry, jobs, provider_orders, scene_assets, source_credentials).
+* Provider execution-policy schema and worker enforcement foundation for rate limits, concurrency, backoff, quotas, and staging.
+* Provider/source-specific queues plus heavy-worker separation for CPU/scratch-intensive processing.
 * Secret store wired from day one (per-provider credentials, rotation, log redaction).
 
 Exit gate: all services healthy; schema migrated; secrets resolving.
@@ -988,9 +1243,9 @@ Entry gate: Phase 1 exit + CDSE validation passed.
 Deliverables:
 
 * CDSE/Sentinel-2 adapter; AOI search; download with integrity (checksum, resume).
-* Raw + per-band asset storage; metadata; SCL cloud/shadow mask.
+* Raw lake registration; all-band/asset inventory; metadata; SCL cloud/shadow mask.
 * Index calc: NDVI, MSAVI, NDMI, NDBI, **NDRE, RECI** (Sentinel-2 has Red Edge); COG encoding standard; raster output catalogue.
-* TiTiler serving; field polygon clipping; zonal statistics; ± 7-day best-scene selection (§8.3); field-index API incl. UNAVAILABLE.
+* TiTiler serving; field polygon clipping; zonal statistics; class-area statistics; default NDVI visualization/threshold profile; ± 7-day best-scene selection (§8.3); field-index API incl. UNAVAILABLE.
 * 6-month clear-season Bangalore backfill for Sentinel-2.
 
 Exit gate: a field polygon returns tile + stats + quality end to end for Sentinel-2.
@@ -1022,6 +1277,7 @@ Deliverables:
 * USGS adapter (Collection-2 L2 SR + QA_PIXEL); band mapping.
 * Integrate Landsat into best-scene selection across Sentinel-2 / ResourceSat / Landsat.
 * Time-series API with per-point sensor tags; mixed-sensor harmonization flags/notes.
+* Progressive NDVI summary for the selected plot over the six-month MVP window.
 
 Exit gate: multi-source best-scene selection is deterministic; time-series returns sensor-tagged points.
 
@@ -1036,6 +1292,7 @@ Deliverables:
 * Revisit-aware scheduler (per-source cadence); retry policy; failed-job dashboard.
 * Auto-download / auto-process new scenes; register new per-scene COGs (no precomputed AOI mosaic).
 * Provider quota / rate-limit handling.
+* Raw lifecycle controls that are disabled by default and require explicit operator enablement before deletion.
 
 Exit gate: new scenes are auto-ingested and immediately queryable.
 
@@ -1071,27 +1328,31 @@ The MVP is successful when:
 1. The system can backfill 6 months of clear-season satellite data for the Bangalore 60 km AOI.
 2. **Sentinel-2 ingestion → index → field query works end to end first** (the proving vertical slice); ResourceSat ingestion works end to end as the parallel India track.
 3. Raw products and per-band assets are stored safely in MinIO with verified checksums.
-4. Metadata and provenance are stored in PostGIS.
-5. Duplicate downloads are avoided.
-6. Bands are extracted and mapped correctly per source/instrument.
-7. **Per-sensor cloud/quality masks are applied** (Sentinel-2 SCL, Landsat QA_PIXEL, ResourceSat custom).
-8. **NDVI is generated correctly, first from Sentinel-2.**
-9. NDMI, MSAVI, and NDBI are generated only where the source/instrument has the required bands.
-10. NDRE and RECI are generated only for Red-Edge sources (Sentinel-2 in MVP; not ResourceSat).
-11. **ResourceSat surface reflectance is atmospherically corrected and cross-validated against Sentinel-2 within tolerance** before its outputs are exposed.
-12. COG outputs follow the encoding standard (dtype/scale/nodata/mask/overviews) and pass `rio cogeo validate`.
-13. TiTiler can serve index layers.
-14. UI/backend can send a field polygon (EPSG:4326) and index name.
-15. API returns an opaque layer reference, signed tile/stats URLs, statistics, source + sensor + date, cloud score, resolution, confidence, and selection reason — **with no internal storage paths leaked**.
-16. **Best-scene selection is deterministic within the requested date ± 7 days** (quality-first, nearest-date tie-break).
-17. Scenes/fields below the usable-pixel floor return **status UNAVAILABLE** rather than a misleading layer; small fields get a min-valid-pixel / mixed-pixel warning.
-18. The external API enforces authentication, rate limits, and geometry-size limits.
-19. Scheduler can automatically check, download, and process new data; new per-scene COGs become queryable.
-20. Failed jobs are visible and retryable.
-21. Outputs are reproducible — formula, AC, mask, and source versions are recorded per raster output.
-22. The same pipeline can be reconfigured for another AOI later.
-23. The system can run fully on-premises with internet access.
-24. Raw data cleanup works according to retention policy.
+4. Original provider raw packages are retained by default; any raw cleanup is opt-in, pre-check gated, and audit logged.
+5. Metadata and provenance are stored in PostGIS.
+6. Duplicate downloads are avoided.
+7. All available provider assets/bands are inventoried, while supported index bands are mapped correctly per source/instrument.
+8. Provider execution policies enforce rate limits, concurrency, retry/backoff, quotas, staging, and checksum rules.
+9. **Per-sensor cloud/quality masks are applied** (Sentinel-2 SCL, Landsat QA_PIXEL, ResourceSat custom).
+10. **NDVI is generated correctly, first from Sentinel-2.**
+11. NDMI, MSAVI, and NDBI are generated only where the source/instrument has the required bands.
+12. NDRE and RECI are generated only for Red-Edge sources (Sentinel-2 in MVP; not ResourceSat).
+13. **ResourceSat surface reflectance is atmospherically corrected and cross-validated against Sentinel-2 within tolerance** before its outputs are exposed.
+14. COG outputs follow the encoding standard (dtype/scale/nodata/mask/overviews) and pass `rio cogeo validate`.
+15. TiTiler can serve index layers using versioned display/colormap profiles.
+16. UI/backend can send a field polygon (EPSG:4326) and index name.
+17. API returns an opaque layer reference, signed tile/stats URLs, statistics, source + sensor + date, cloud score, resolution, confidence, and selection reason — **with no internal storage paths leaked**.
+18. API returns class-area statistics using a versioned threshold profile.
+19. API can return six-month progressive NDVI/time-series analytics for the selected plot with source/quality labels.
+20. Generic visualization classes are clearly labelled as generic and are not presented as validated disease/nutrient/yield diagnosis.
+21. **Best-scene selection is deterministic within the requested date ± 7 days** (quality-first, nearest-date tie-break).
+22. Scenes/fields below the usable-pixel floor return **status UNAVAILABLE** rather than a misleading layer; small fields get a min-valid-pixel / mixed-pixel warning.
+23. The external API enforces authentication, rate limits, and geometry-size limits.
+24. Scheduler can automatically check, download, and process new data; new per-scene COGs become queryable.
+25. Failed jobs are visible and retryable.
+26. Outputs are reproducible — formula, AC, mask, display profile, threshold profile, and source versions are recorded per raster output/query.
+27. The same pipeline can be reconfigured for another AOI later.
+28. The system can run fully on-premises with internet access.
 
 ---
 
@@ -1111,13 +1372,47 @@ Most major design decisions are now resolved in this document (see §2 and the d
 5. Production server decision and production static IP.
 6. Expected number of users / field queries per day (to size API auth + rate limits).
 7. Whether processed COGs should be retained beyond 1 year.
-8. Crop-specific threshold requirements, if any.
-9. Whether the first surface is only the API response or also an internal operator dashboard.
+8. Whether any source/AOI/environment should ever enable raw lifecycle cleanup; default is no cleanup.
+9. Approval of default generic visualization thresholds/legends for NDVI and the initial index set.
+10. Crop-specific threshold requirements, if any, including crop, season, region, and source-specific calibration needs.
+11. Whether weather, soil, crop calendar, irrigation, or field-observation data should enter the first interpretation layer or remain post-MVP.
+12. Whether the first surface is only the API response or also an internal operator dashboard.
 
 > MVP source activation is already decided in §2: Sentinel-2 (Phase 2, first), ResourceSat-2A (Phase 3, parallel), and Landsat 8/9 (Phase 4) are all in the MVP; Sentinel-1/SAR is deferred to Phase 6. So source activation is no longer an open input.
+
+### 19.1 Final Review: Clarifications, Gaps, and Non-Blockers
+
+The processing plan matches the standard remote-sensing and GIS workflow: multispectral input, radiometric/atmospheric/geometric correction, band extraction, masking, vegetation-index calculation, normalization, thresholding, heat-map serving, zonal statistics, and output through maps/API/report-ready metadata.
+
+Remaining clarifications before implementation:
+
+1. Exact AOI polygon, demo date window, and representative field polygons.
+2. Provider access, production static-IP whitelisting, and sample-product download behavior.
+3. ResourceSat product level, atmospheric-correction ancillary inputs, and validation tolerance against Sentinel-2.
+4. Approved generic legends/thresholds for MVP display.
+5. Whether crop/season-specific thresholds are needed in MVP or can wait until calibrated field data exists.
+6. Whether weather, soil, crop calendar, irrigation, and field observations are part of MVP interpretation or a later enrichment phase.
+7. Whether the first operator surface is API-only or also an internal dashboard.
+
+Known non-blocking gaps:
+
+1. SAR is intentionally deferred and should not be used as silent NDVI replacement.
+2. Weather/soil/crop-calendar integration is deferred unless stakeholders require first-release interpretation beyond index statistics.
+3. Disease, nutrient-deficiency, yield, prescription, and water-stress diagnosis need agronomic calibration and should not be claimed from generic NDVI thresholds alone.
+4. PDF/Shapefile/GeoJSON export and formal report generation can be added after the API/COG/TiTiler path is stable.
+5. Drone/UAV and commercial high-resolution sources remain future extensions behind licensing and cost gates.
+
+Implementation guardrails:
+
+1. Do not compute indices from DN/TOA/raw uncorrected pixels.
+2. Do not generate unsupported indices from missing bands.
+3. Do not upsample coarse data in a way that implies false precision.
+4. Do not widen the ± 7-day selection window or interpolate silently.
+5. Do not expose unvalidated or license-blocked products.
+6. Do not present generic visualization classes as crop-specific diagnosis.
 
 ---
 
 ## 20. Final One-Line Requirement
 
-Build an on-premises, internet-enabled, configurable satellite ingestion and vegetation-index processing platform for Indian agricultural AOIs, starting with Bangalore 60 km and 6 months of clear-season history — proving the pipeline on Sentinel-2 first while building atmospherically-corrected ResourceSat in parallel as the India differentiator — generating analysis-ready per-scene COG index layers with per-sensor cloud masking and deterministic ± 7-day best-scene selection, computing each index only where a source's bands support it, preserving raw data and full provenance for a defined retention window, and exposing field-level NDVI/NDRE/MSAVI/RECI/NDMI/NDBI analytics through an authenticated API and TiTiler for a separate UI application.
+Build an on-premises, internet-enabled, configurable satellite ingestion data lake and vegetation-index processing platform for Indian agricultural AOIs, starting with Bangalore 60 km and 6 months of clear-season history — proving the pipeline on Sentinel-2 first while building atmospherically-corrected ResourceSat in parallel as the India differentiator — retaining original provider raw packages by default, inventorying all available assets/bands, enforcing provider-specific execution policies, generating analysis-ready per-scene COG index layers with per-sensor cloud masking, versioned visualization/threshold profiles, class-area statistics, progressive NDVI/time-series analytics, and deterministic ± 7-day best-scene selection, computing each index only where a source's bands support it, preserving full provenance, and exposing field-level NDVI/NDRE/MSAVI/RECI/NDMI/NDBI analytics through an authenticated API and TiTiler for a separate UI application without presenting generic index classes as validated agronomic diagnosis.

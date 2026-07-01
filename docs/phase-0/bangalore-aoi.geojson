@@ -1,0 +1,46 @@
+{
+  "type": "FeatureCollection",
+  "name": "akasha_phase0_bangalore_aoi",
+  "bbox": [77.023647, 12.537266, 78.131561, 13.61645],
+  "features": [
+    {
+      "type": "Feature",
+      "id": "bangalore_60km_center",
+      "properties": {
+        "role": "aoi_center",
+        "description": "Phase 0 Bangalore AOI center provided by the project team.",
+        "crs": "EPSG:4326",
+        "radius_km": 60,
+        "source": "user_provided",
+        "captured_for": "phase_0_sample_product_spike"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [77.5776037099731, 13.076858177177233]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "bangalore_60km_bbox",
+      "properties": {
+        "role": "aoi_validation_bbox",
+        "description": "User-provided bounding box for Bangalore 60 km Phase 0 sample searches.",
+        "crs": "EPSG:4326",
+        "source": "user_provided",
+        "captured_for": "phase_0_sample_product_spike"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.023647, 12.537266],
+            [78.131561, 12.537266],
+            [78.131561, 13.61645],
+            [77.023647, 13.61645],
+            [77.023647, 12.537266]
+          ]
+        ]
+      }
+    }
+  ]
+}
