@@ -7,6 +7,10 @@
 3. Set `AKASHA_API_KEY_HASHES` using `akasha.security.hash_api_key`.
 4. Confirm public ingress ports do not conflict with existing services.
 
+For Docker Desktop on Windows, prefer a Linux-side `AKASHA_DATA_ROOT` such as
+`/srv/akasha-local` in the local env file. Relative Windows bind paths can make
+PostgreSQL initialization stall on `initdb`.
+
 ## Deploy
 
 ```bash

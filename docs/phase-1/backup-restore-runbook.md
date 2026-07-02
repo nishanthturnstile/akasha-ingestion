@@ -15,6 +15,8 @@ Phase 1 validates backup and restore using a bounded dataset:
 Use pgBackRest for full and incremental backups with WAL archiving when production RPO/RTO is defined.
 The Phase 1 Compose profile wires the pgBackRest sidecar to PostgreSQL through the shared
 `postgres-run` socket volume and a read-only mount of the PostgreSQL data directory.
+The sidecar image is built locally from `docker/pgbackrest.Dockerfile` because pgBackRest does
+not publish an official versioned Docker image.
 
 Dev validation commands:
 

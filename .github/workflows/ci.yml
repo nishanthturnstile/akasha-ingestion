@@ -40,11 +40,14 @@ jobs:
       - name: Initialize pgSTAC
         run: |
           docker run --rm --network host \
+            -e PGSTACDOCKER=1 \
             -e PGHOST=localhost \
+            -e POSTGRES_DB=akasha \
             -e PGDATABASE=akasha \
             -e PGUSER=akasha \
             -e PGPASSWORD=akasha \
-            ghcr.io/stac-utils/pgstac:v0.7.10 migrate
+            ghcr.io/stac-utils/pgstac:v0.7.10 \
+            sh -lc "if psql -X -q -tAc \"SELECT 1 FROM pg_namespace WHERE nspname = 'pgstac'\" | grep -q 1; then echo 'pgSTAC already initialized'; else /opt/bin/initpgstac; fi"
       - name: Validate migrations
         run: alembic upgrade head
       - name: Seed Phase 1 catalog

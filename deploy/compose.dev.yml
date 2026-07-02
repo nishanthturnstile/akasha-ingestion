@@ -4,9 +4,18 @@ services:
       - "127.0.0.1:8000:8000"
 
   grafana:
+    user: "0:0"
+    networks: [edge, internal]
     ports:
       - "127.0.0.1:3000:3000"
 
+  loki:
+    user: "0:0"
+
+  prometheus:
+    user: "0:0"
+
   flower:
+    networks: [edge, internal]
     ports:
       - "127.0.0.1:5555:5555"
