@@ -35,7 +35,7 @@ Architecture docs complete
 2. **Prove the full pipeline with Sentinel-2 first** because Sentinel-2 L2A includes surface reflectance and SCL cloud masking.
 3. **Build ResourceSat in parallel only after Phase 0 sample analysis** because atmospheric correction and custom cloud masking are the highest scientific risks.
 4. **Keep every source gated** until provider access, processing, validation, license, and product exposure checks pass.
-5. **Retain original provider raw packages by default** as the durable raw zone of the on-prem ingestion lake; raw cleanup is opt-in only.
+5. **Retain source data needed for reproducibility by default**: raw provider packages for package/download providers, and source STAC manifests plus AOI-complete source COG mirrors for STAC COG providers; cleanup is opt-in only.
 6. **Inventory all available provider assets/bands**, then let processing profiles choose the subset required for each derived product.
 7. **Store per-scene COGs, not permanent per-field rasters.**
 8. **Use deterministic best-scene selection** for field queries.
@@ -72,8 +72,8 @@ Use these workstreams across phases so planning and execution remain organized.
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | Infrastructure               | Azure VM, on-prem VM, Docker, networking, storage, backups, deployment.                                       |
 | Platform services            | FastAPI, PostGIS/pgSTAC, MinIO, Celery, Redis/RabbitMQ, TiTiler, scheduler.                                   |
-| Provider integrations        | CDSE, Bhoonidhi/NRSC, USGS, Earthdata, future vendor adapters.                                                |
-| Provider execution           | Provider-specific rate limits, quotas, retries, staging, token-bucket/backpressure, and queue routing.        |
+| Provider integrations        | Element84 Earth Search/AWS COGs, Bhoonidhi/NRSC, USGS, CDSE optional fallback, Earthdata, future vendors.     |
+| Provider execution           | Provider-specific rate limits, quotas, retries, staging, mirroring/downloads, token-bucket/backpressure.      |
 | Raster processing            | all-band inventory, extraction, metadata parsing, CRS, resampling, AC, masking, index engine, COG generation. |
 | Metadata and catalog         | source registry, scene catalog, orders, jobs, raw/extracted/ARD/derived assets, raster outputs, provenance.   |
 | API and serving              | source API, sync API, jobs API, field index API, time-series/progressive NDVI API, signed tile/stat URLs.     |
@@ -122,7 +122,7 @@ Phase 0 can start when:
 1. The roadmap is accepted.
 2. Azure VM access is available.
 3. Current Bhoonidhi/NRSC credentials and whitelisting are confirmed.
-4. Team has permission to validate CDSE, USGS/M2M, and Earthdata accounts.
+4. Team has permission to validate Earth Search, USGS/M2M, Earthdata, and optional CDSE fallback access.
 
 ### Sequential tasks
 
@@ -168,8 +168,9 @@ Providers:
 | Provider       | Source         | Required validation                                                          |
 | -------------- | -------------- | ---------------------------------------------------------------------------- |
 | Bhoonidhi/NRSC | ResourceSat-2A | Login/API access, order/staging behavior, download links, expiry, checksums. |
-| CDSE           | Sentinel-2     | Auth, catalogue search, L2A product access, download.                        |
+| Earth Search   | Sentinel-2     | Public STAC search, COG asset availability, SCL COG access, scale/offset metadata. |
 | USGS/M2M       | Landsat 8/9    | Auth, search, Collection 2 Level 2 access, QA_PIXEL asset access.            |
+| CDSE           | Sentinel-2     | Optional future fallback validation; not a Phase 2 blocker.                  |
 | Earthdata      | MODIS later    | Auth only for future readiness; not MVP field analytics.                     |
 
 Acceptance:
@@ -178,23 +179,23 @@ Acceptance:
 - Credentials are not stored in plaintext.
 - Any whitelisting requirement is documented.
 
-#### 0.4 Download sample products
+#### 0.4 Acquire sample products/assets
 
-Download 3 to 5 representative products per MVP source:
+Acquire 3 to 5 representative products or source assets per MVP source:
 
 | Source             | Sample target                                                      |
 | ------------------ | ------------------------------------------------------------------ |
-| Sentinel-2 L2A     | Clear, partly cloudy, and edge-of-AOI scenes.                      |
+| Sentinel-2 L2A     | Earth Search STAC items, required COG assets, and SCL COGs for clear, partly cloudy, and edge-of-AOI scenes. |
 | ResourceSat LISS-4 | Multiple scenes if needed to cover AOI; clear and cloudy examples. |
 | ResourceSat LISS-3 | Clear and cloudy examples with SWIR.                               |
 | ResourceSat AWiFS  | Regional/coarse sample for coverage and metadata.                  |
-| Landsat 8/9 C2 L2  | Clear and cloudy examples with QA_PIXEL.                           |
+| Landsat 8/9 C2 L2  | Earth Search/USGS asset examples with QA_PIXEL and requester-pays/access notes. |
 
 Acceptance:
 
-- Samples are stored under a temporary controlled sample area.
-- Product IDs, dates, provider links, checksums, and sizes are recorded.
-- Failed downloads have error details.
+- Samples or source asset manifests are stored under a temporary controlled sample area.
+- Product/STAC item IDs, dates, provider links, checksums/ETags where available, href types, and sizes are recorded.
+- Failed source COG reads, mirrors, downloads, or provider requests have error details.
 
 #### 0.5 Document real product characteristics
 
@@ -212,10 +213,12 @@ For every sample product, record:
 - scale and offset
 - nodata values
 - cloud/QA assets
+- STAC asset keys and alternate hrefs where present
+- access mode (`public_https`, `requester_pays_s3`, `official_api`, or `authenticated_download`)
 - scene footprint
 - file sizes
 - provider checksum support
-- download/staging behavior
+- mirror/download/staging behavior
 
 Acceptance:
 
@@ -242,19 +245,20 @@ Acceptance:
 Use actual samples to estimate:
 
 - raw product size per source
+- retained source COG mirror size per source/AOI where the provider is STAC/COG-based
 - extracted asset size
 - ARD/intermediate size
 - per-index COG size
 - six-month Bangalore backfill size
 - production raw-lake growth with raw cleanup disabled by default
-- backup/cold-storage requirement for retained raw provider packages
+- backup/cold-storage requirement for retained raw provider packages and mirrored source COGs
 - scratch disk requirement
 - approximate CPU time per product
 
 Acceptance:
 
 - MVP and production storage estimates are updated using real sample data.
-- Estimates assume original raw provider packages are retained unless an explicit lifecycle cleanup policy is later enabled.
+- Estimates assume original raw provider packages or mirrored source COGs are retained unless an explicit lifecycle cleanup policy is later enabled.
 - Any gap against current VM sizing is documented.
 
 ### Phase 0 exit gate
@@ -376,7 +380,7 @@ Deliverables:
 - MinIO buckets/prefixes.
 - Bucket policies.
 - Lake-zone prefixes: raw, extracted, ARD, indices, QA, analytics, reports, mosaics, tmp.
-- Lifecycle controls disabled by default for raw packages.
+- Lifecycle controls disabled by default for raw packages and source COG mirrors.
 - Object path conventions.
 - Storage service abstraction.
 
@@ -384,7 +388,7 @@ Acceptance:
 
 - API/worker can write and read test objects.
 - Raw bucket is not public.
-- Raw provider packages can be written and retained with checksum/lineage metadata.
+- Raw provider packages and/or mirrored source COGs can be written and retained with checksum/lineage metadata.
 - Raw cleanup cannot run unless explicitly enabled in configuration.
 
 #### 1.6 Job queue and scheduler foundation
@@ -397,7 +401,7 @@ Deliverables:
 - Retry policies.
 - Provider execution-policy loading.
 - Provider/source-specific rate-limit enforcement.
-- Search/download/heavy/UI queue separation.
+- Search/mirror/download/heavy/UI queue separation.
 - Backpressure rules so backfills do not starve routine sync or UI analytics.
 - Processing job state in Postgres.
 - Scheduler table or source schedule evaluation module.
@@ -479,7 +483,7 @@ Phase 1 is complete when:
 1. Docker Compose platform runs on Azure dev VM.
 2. Database migrations and source seed data are working.
 3. MinIO storage is available and private.
-4. Raw lake writes preserve original packages with checksum and lineage metadata.
+4. Raw lake writes preserve original packages or mirrored source COGs with checksum and lineage metadata.
 5. Celery jobs execute and update DB state.
 6. Provider execution policies and queue isolation are functional.
 7. API health/source/job endpoints work.
@@ -499,56 +503,65 @@ Prove the first complete end-to-end optical pipeline using Sentinel-2 L2A.
 Phase 2 can start when:
 
 1. Phase 1 exits.
-2. CDSE credentials are validated.
-3. Sentinel-2 sample product layout is documented.
+2. Earth Search public STAC search is reachable.
+3. Workers can read HTTPS COGs and write AOI-complete source COG mirrors to MinIO.
+4. Sentinel-2 Earth Search asset layout, required COG asset keys, SCL asset, scale/offset, and nodata behavior are documented.
 
 ### Sequential tasks
 
-#### 2.1 CDSE provider adapter
+#### 2.1 Earth Search provider route and adapter
 
 Deliverables:
 
-- CDSE authentication.
-- AOI/date search.
-- Scene metadata normalization.
-- Product download with checksum/resume where available.
-- Provider execution-policy values for CDSE rate limits, retry/backoff, availability lag, and download concurrency.
+- Provider route model for `earthsearch:sentinel-2-l2a`.
+- Earth Search STAC root/collection validation.
+- AOI/date STAC `/search`.
+- STAC item and scene metadata normalization.
+- Required asset discovery for Sentinel-2 bands and SCL.
+- Provider execution-policy values for search, retry/backoff, availability lag, and source COG mirror concurrency.
 
 Acceptance:
 
-- Search returns Sentinel-2 L2A scenes for Bangalore AOI.
-- Downloaded raw packages are registered in the raw lake with checksum and lineage.
+- Search returns Sentinel-2 L2A STAC items for Bangalore AOI.
+- Required COG assets and SCL are discoverable with scale/offset/nodata metadata.
 - Adapter contract tests verify normalized scene fields required by the shared catalog.
-- CDSE jobs respect configured rate/concurrency policy.
+- Earth Search jobs respect configured rate/concurrency policy.
 
-#### 2.2 Sentinel-2 metadata and band extraction
+#### 2.2 Sentinel-2 STAC asset catalog and source mirroring
 
 Deliverables:
 
-- SAFE/product parser.
-- All available SAFE assets/bands inventory.
+- STAC item/asset parser.
+- All available Earth Search assets/bands inventory.
+- External asset href and alternate href storage.
+- AOI-complete source COG mirroring into MinIO.
+- Source mirror checksum/lineage metadata.
 - Band mapping for downstream processing profiles.
 - SCL mask mapping.
-- CRS and resolution parsing.
-- Scale/offset handling.
+- CRS, resolution, scale/offset, and nodata parsing.
 
 Acceptance:
 
 - All available assets are inventoried, and required bands for NDVI, MSAVI, NDMI, NDBI, NDRE, and RECI are detected correctly.
+- Required source COGs for accepted acquisitions are mirrored before normal processing.
 
 #### 2.3 Sentinel-2 preprocessing profile
 
 Deliverables:
 
 - L2A surface reflectance path.
+- STAC scale/offset application after nodata masking.
 - SCL cloud/shadow/no-data mask.
 - AOI clipping.
+- Asset-CRS window calculation.
+- Same-date multi-tile grouping/mosaicking where needed.
 - Resolution alignment rules.
 - Valid pixel computation.
 
 Acceptance:
 
-- Clear and cloudy samples produce expected usable-pixel scores.
+- Clear and cloudy COG samples produce expected usable-pixel scores.
+- Nodata is masked before scale/offset is applied.
 
 #### 2.4 Index engine MVP
 
@@ -564,7 +577,7 @@ Implement:
 Acceptance:
 
 - Unsupported combinations are rejected.
-- Division-by-zero, nodata, masks, and scale are handled.
+- Division-by-zero, nodata, masks, scale, and offset are handled.
 - Formula versions are recorded.
 - Golden-input index tests produce expected values for representative pixels.
 
@@ -575,7 +588,7 @@ Deliverables:
 - Per-scene COG output for supported indices.
 - COG validation.
 - Raster output metadata.
-- STAC/pgSTAC item/assets if adopted.
+- STAC/pgSTAC item/assets for Akasha-derived COGs.
 
 Acceptance:
 
@@ -589,6 +602,7 @@ Deliverables:
 
 - Opaque layer ID registry.
 - Signed tile/stat URL generation.
+- TiTiler-PgSTAC edge blocking for native routes.
 - Field polygon clipping.
 - Zonal statistics.
 - Best-scene selection v1.
@@ -597,7 +611,7 @@ Deliverables:
 Acceptance:
 
 - A field polygon returns tile URL, stats, source, date, resolution, cloud score, quality, and provenance.
-- Internal MinIO paths are not exposed.
+- Internal MinIO paths and Earth Search/AWS hrefs are not exposed.
 - `UNAVAILABLE` is returned when no valid scene exists.
 
 #### 2.7 Sentinel-2 six-month backfill
@@ -606,6 +620,7 @@ Deliverables:
 
 - Backfill job for Bangalore AOI.
 - Duplicate detection.
+- Source mirror storage preflight.
 - Failure dashboard.
 - Backfill summary.
 
@@ -618,7 +633,7 @@ Acceptance:
 Phase 2 is complete when Sentinel-2 can run:
 
 ```text
-CDSE search -> raw lake registration -> all-band inventory -> metadata -> SCL mask -> indices -> COG -> catalog -> TiTiler -> field stats API
+Earth Search search -> STAC manifest -> source COG mirror -> SCL mask -> indices -> COG -> pgSTAC -> TiTiler-PgSTAC -> field stats API
 ```
 
 for at least one real field polygon and the six-month backfill is operational.
@@ -782,25 +797,27 @@ Add Landsat 8/9 and make cross-source best-scene selection deterministic across 
 Phase 4 can start when:
 
 1. Phase 2 exits.
-2. USGS/M2M access is validated.
-3. ResourceSat status is at least internally processable or explicitly gated.
+2. Earth Search `landsat-c2-l2` route is validated for search and required asset metadata.
+3. USGS/M2M access is validated only if the official fallback route is in scope for the slice.
+4. ResourceSat status is at least internally processable or explicitly gated.
 
 ### Sequential tasks
 
-#### 4.1 USGS adapter
+#### 4.1 Landsat provider route and USGS fallback
 
 Deliverables:
 
-- USGS auth.
+- Earth Search `landsat-c2-l2` route validation.
+- USGS auth for official fallback.
 - Landsat 8/9 Collection 2 Level 2 search.
-- Asset discovery/download.
+- Asset discovery and source mirroring/download.
 - Metadata normalization.
-- USGS execution-policy values for request limits, retries, download concurrency, and availability lag.
+- Landsat execution-policy values for request limits, retries, mirror/download concurrency, requester-pays settings, and availability lag.
 
 Acceptance:
 
-- Landsat 8/9 scenes for Bangalore AOI are searchable and downloadable.
-- Downloaded raw packages/assets are registered in the raw lake with checksum and lineage.
+- Landsat 8/9 scenes for Bangalore AOI are searchable and retrievable through the active route.
+- Mirrored source assets or downloaded raw packages are registered in the raw/source lake with checksum and lineage.
 - Adapter contract tests verify normalized scene fields required by the shared catalog.
 
 #### 4.2 Landsat processing profile
@@ -942,21 +959,21 @@ Acceptance:
 - Backfill jobs do not starve field analytics or routine sync.
 - Provider limits are enforced by policy rather than ad hoc adapter code.
 
-#### 5.4 Raw lifecycle governance
+#### 5.4 Raw/source lifecycle governance
 
 Deliverables:
 
-- Raw lifecycle policy configuration, disabled by default.
+- Raw/source lifecycle policy configuration, disabled by default.
 - Operator enablement flow for scoped cleanup by source/AOI/environment.
-- Raw cleanup eligibility job that only runs when explicitly enabled.
-- MinIO lifecycle policies that are not active for raw packages by default.
+- Raw/source cleanup eligibility job that only runs when explicitly enabled.
+- MinIO lifecycle policies that are not active for raw packages or source COG mirrors by default.
 - Metadata retention checks.
 - Audit log for deletion.
 
 Acceptance:
 
-- Original provider raw packages are retained by default.
-- Raw data is deleted only when lifecycle cleanup is explicitly enabled and derived outputs, lineage, checksums, backup/re-download posture, and provenance are confirmed.
+- Raw provider packages and source COG mirrors are retained by default.
+- Raw/source data is deleted only when lifecycle cleanup is explicitly enabled and derived outputs, lineage, checksums, backup/re-acquisition posture, and provenance are confirmed.
 
 #### 5.5 Operator dashboard
 
@@ -1006,7 +1023,7 @@ Acceptance:
 
 Deliverables:
 
-- CDSE Sentinel-1 search/download.
+- Sentinel-1 catalog route selection, with Earth Search `sentinel-1-grd` as the initial public STAC/COG candidate.
 - GRD preprocessing.
 - VV/VH outputs.
 - VV/VH ratio.
@@ -1147,8 +1164,9 @@ These should be resolved or tracked before or during Phase 0.
 | ------------------------------------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------- |
 | Exact Bangalore AOI polygon                      | Phase 0                        | Provider search, storage sizing, and backfill scope.                                              |
 | Clear-season demo window                         | Phase 0                        | Sample product selection and initial validation.                                                  |
-| CDSE credentials                                 | Phase 2                        | Sentinel-2 vertical slice.                                                                        |
-| USGS/M2M credentials                             | Phase 4                        | Landsat integration.                                                                              |
+| Earth Search source COG read/mirror validation  | Phase 2                        | Sentinel-2 vertical slice.                                                                        |
+| CDSE credentials                                 | Optional future fallback       | Sentinel-2 official fallback only, not Phase 2 primary path.                                      |
+| USGS/M2M credentials                             | Phase 4 optional fallback      | Landsat official fallback route, not Earth Search Landsat primary validation.                     |
 | Earthdata credentials                            | Later Phase 4/6                | MODIS/future context products.                                                                    |
 | pgSTAC adopt/decline                             | Phase 1                        | Blocks schema design, TiTiler-PgSTAC integration, and catalog strategy.                           |
 | CI/CD platform and image registry                | Phase 1                        | Needed for pinned builds, migration validation, and dev/prod parity.                              |
@@ -1169,8 +1187,8 @@ These should be resolved or tracked before or during Phase 0.
 2. Create a Phase 0 execution checklist or issue list.
 3. Confirm the exact Bangalore AOI polygon.
 4. Validate Azure VM access and whitelisted public IP.
-5. Confirm provider credentials for Bhoonidhi/NRSC, CDSE, USGS/M2M, and Earthdata.
-6. Download and document sample products.
+5. Confirm provider access for Earth Search plus credentials for Bhoonidhi/NRSC, USGS/M2M, Earthdata, and optional CDSE fallback.
+6. Acquire and document sample products/assets, including Earth Search source COG reads and mirrors.
 7. Use Phase 0 findings to finalize Phase 1 technical backlog.
 
 ## 18. Definition of MVP complete
@@ -1180,12 +1198,12 @@ The MVP is complete when:
 1. Azure dev/staging runs the full self-hosted Compose stack.
 2. Sentinel-2 works end to end for Bangalore AOI:
    ```text
-   search -> raw lake registration -> all-band inventory -> process -> COG -> catalog -> tile -> field stats
+   Earth Search search -> STAC manifest -> source COG mirror -> process -> COG -> catalog -> tile -> field stats
    ```
 3. ResourceSat works end to end internally and is externally exposed only if validation passes.
 4. Landsat is integrated for continuity and cross-source selection.
-5. Original provider raw packages are retained by default with checksum and lineage.
-6. Provider execution policies enforce rate limits, retries, quotas, staging, and concurrency.
+5. Raw provider packages and/or source COG mirrors are retained by default with checksum and lineage.
+6. Provider execution policies enforce rate limits, retries, quotas, staging, mirroring/downloads, and concurrency.
 7. Field-index API returns signed tile/stat URLs, statistics, quality, resolution, selected scene, and provenance.
 8. Progressive NDVI/time-series API returns six-month selected-plot analytics with source and quality labels.
 9. Unsupported source/index combinations are rejected.

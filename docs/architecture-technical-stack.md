@@ -35,10 +35,10 @@ The most important architecture decisions are:
 
 1. Keep the science and raster pipeline Python-native because the strongest open-source geospatial libraries are Python/GDAL based.
 2. Store rasters as per-scene Cloud Optimized GeoTIFFs, not permanent per-field TIFFs.
-3. Retain original provider raw packages by default as the durable raw zone of the ingestion lake.
+3. Retain reproducible source inputs by default: raw provider packages for package/download providers, and source STAC manifests plus AOI-complete source COG mirrors for STAC COG providers.
 4. Use PostGIS/pgSTAC as the metadata and search catalog, with MinIO as the raster/object store.
 5. Treat each satellite/instrument as configuration plus a provider adapter, not as custom one-off code.
-6. Enforce provider-specific execution policies for auth, rate limits, throttling, retries, quotas, staging, and checksums.
+6. Enforce provider-route-specific execution policies for auth, rate limits, throttling, retries, quotas, staging, mirroring/downloads, and checksums.
 7. Use deterministic query-time best-scene selection for field analytics.
 8. Keep scientific index outputs separate from display normalization, threshold classes, and agronomic interpretation.
 9. Gate every source by validation, license/product exposure, and supported bands before serving outputs.
@@ -66,7 +66,7 @@ This document is based on:
 | Current whitelisted machine is Azure VM | Use Azure VM for provider adapter validation until production static IP is whitelisted. |
 | MVP AOI is Bangalore plus about 60 km radius | Optimize first for one regional AOI, but model AOI as configuration. |
 | MVP backfill is 6 months | Backfill must be idempotent and restartable. |
-| Raw provider packages are retained by default | MinIO lifecycle cleanup must be disabled unless an operator explicitly enables a scoped cleanup policy with pre-delete checks and audit logging. |
+| Reproducible source inputs are retained by default | Raw package cleanup and source COG mirror cleanup must be disabled unless an operator explicitly enables a scoped cleanup policy with pre-delete checks and audit logging. |
 | UI is separate | This project exposes authenticated APIs, signed tile/stat URLs, metadata, and TiTiler-compatible outputs. |
 | MVP optical sources are Sentinel-2, ResourceSat-2A, and Landsat 8/9 | Optical pipeline ships first; SAR is a separate later pipeline. |
 | ResourceSat is an India differentiator | ResourceSat atmospheric correction and cloud masking are high-priority but high-risk workstreams. |
@@ -77,12 +77,12 @@ These should not be invented in code or documentation:
 
 1. Exact Bangalore AOI polygon.
 2. Clear-season backfill window for initial demo.
-3. Final provider account status for CDSE, USGS/M2M, Earthdata, and Bhoonidhi/NRSC.
+3. Final provider account/status for Bhoonidhi/NRSC, USGS/M2M, Earthdata, optional CDSE fallback, and any requester-pays AWS access.
 4. ResourceSat atmospheric-correction ancillary data source for aerosol and water-vapour inputs.
 5. Production server and static IP.
 6. Expected API users and field-query volume.
 7. Final retention period for processed COGs beyond the baseline.
-8. Whether any source/AOI/environment should enable raw lifecycle cleanup; default is no cleanup.
+8. Whether any source/AOI/environment should enable raw or source-mirror lifecycle cleanup; default is no cleanup.
 9. Approval of generic visualization legends and threshold profiles for the first supported indices.
 10. Crop-specific thresholds or agronomy rules by crop, season, region, and sensor/source.
 11. Whether weather, soil, crop calendar, irrigation, or field observations should be integrated in the first interpretation layer or deferred.
@@ -95,7 +95,8 @@ These should not be invented in code or documentation:
 ```mermaid
 flowchart LR
   subgraph Providers
-    CDSE[CDSE / Sentinel]
+    EarthSearch[Element84 Earth Search / AWS COGs]
+    CDSE[CDSE / optional Sentinel fallback]
     NRSC[Bhoonidhi / NRSC]
     USGS[USGS / Landsat]
     Earthdata[NASA Earthdata]
@@ -220,7 +221,7 @@ Use PostGIS as the authoritative metadata and job-state store. Prefer pgSTAC for
 | Ceph | Highly scalable and redundant | Operationally heavy for MVP | Future only |
 | SeaweedFS | Lightweight distributed storage | Smaller ecosystem than MinIO for S3 geospatial workflows | Alternative only |
 
-Use MinIO buckets for raw, extracted, ARD, indices, QA, reports, and backups. Enable bucket policies, versioning where useful, and lifecycle rules for raw retention.
+Use MinIO buckets for raw/source manifests, mirrored source COGs, extracted/ARD where needed, indices, QA, reports, and backups. Enable bucket policies and versioning where useful. Lifecycle cleanup for raw packages and source COG mirrors is disabled by default.
 
 ### 4.5 Queue, scheduler, and workflow orchestration
 
@@ -241,7 +242,8 @@ Recommended queues:
 | Queue | Purpose |
 |---|---|
 | `search` | Provider catalog search jobs |
-| `download` | Provider downloads, checksums, resume |
+| `mirror` | Source COG mirroring from STAC assets into MinIO |
+| `download` | Provider package downloads, checksums, resume for providers that require downloads |
 | `preprocess` | Extraction, CRS validation, band preparation |
 | `heavy-cpu` | ResourceSat AC, mosaicking, large warps |
 | `cog` | COG generation and validation |
@@ -524,7 +526,7 @@ Each source row should include:
 |---|---|
 | `catalog_slug` | Stable catalogue business key. |
 | `source_id` | Processing source identifier. |
-| `provider_adapter` | Adapter key such as `cdse`, `bhoonidhi`, `usgs`, `earthdata`, `planet`, `vendor`. |
+| `provider_adapter` | Legacy/default/display adapter key such as `earthsearch`, `bhoonidhi`, `usgs`, `cdse`, `earthdata`, `planet`, `vendor`. |
 | `instrument_mode` | LISS-3, LISS-4, AWiFS, OLI, MSI, etc. |
 | `analysis_level` | L2A, C2L2, BOA, TOA, DN. |
 | `bands` | Exact available bands. |
@@ -533,9 +535,15 @@ Each source row should include:
 | `validation_profile` | Required validation before exposure. |
 | `product_exposure` | Hidden, internal QA, product active, blocked. |
 | `license_profile` | Serving constraints and attribution/exposure rules. |
-| `credential_ref` | Reference to secret store entry. |
-| `execution_policy_ref` | Provider/source execution policy for rate limits, quotas, retries, staging, and concurrency. |
+| `credential_ref` | Legacy/default credential reference only; route-specific credentials belong on provider routes. |
+| `execution_policy_ref` | Legacy/default policy reference only; route-specific execution policy belongs on provider routes. |
 | `schedule_state` | Routine, gated, archive-only, disabled, manual-only. |
+
+`source_provider_routes` is the authoritative model for adapter, access mode, credentials, and
+execution policy when a logical source has multiple routes, such as Sentinel-2 Earth Search primary
+plus optional CDSE fallback or Landsat Earth Search primary plus USGS fallback. Source-level provider
+fields are defaults/display metadata and must not block a source because an optional route lacks
+credentials.
 
 ### 7.3 Provider adapter contract
 
@@ -543,22 +551,22 @@ Every provider adapter should implement the same conceptual interface:
 
 | Method | Responsibility |
 |---|---|
-| `authenticate()` | Resolve provider credentials and create a session/token. |
+| `authenticate()` | Resolve provider credentials and create a session/token when the provider route requires auth. No-op for public Earth Search Sentinel-2. |
 | `search(aoi, date_range, source_config)` | Return provider scenes matching AOI/date/source constraints. |
 | `normalize_scene(provider_record)` | Convert provider-specific metadata into internal scene metadata. |
 | `order(scene)` | Submit order if the provider requires staging. No-op for direct-download providers. |
 | `poll_order(order)` | Check accepted/staged/failed/expired state. |
-| `get_download_assets(scene_or_order)` | Return downloadable assets and expiry metadata. |
-| `download(asset, destination)` | Download with resume, checksum, and retry. |
-| `parse_metadata(local_or_object_path)` | Extract product manifest, all available assets/bands, CRS, scale, offsets, and QA assets. |
+| `get_assets(scene_or_order)` | Return downloadable assets, external STAC asset hrefs, alternates, roles, and expiry metadata. |
+| `mirror_or_download(asset, destination)` | Mirror source COGs or download packages with checksum and retry according to route policy. |
+| `parse_metadata(local_or_object_path)` | Extract or normalize product/STAC manifest, all available assets/bands, CRS, scale, offsets, and QA assets. |
 | `validate_license(scene)` | Confirm the scene can be processed and exposed according to source policy. |
 
 Provider adapters should also expose a capability descriptor:
 
 | Capability | Examples |
 |---|---|
-| Auth type | OAuth2, API key, session cookie, manual token, mTLS. |
-| Access pattern | Direct download, order/staging, manual vendor upload. |
+| Auth type | None/public STAC, OAuth2, API key, session cookie, manual token, mTLS, requester-pays AWS. |
+| Access pattern | STAC COG mirror, direct download, order/staging, manual vendor upload. |
 | Checksum type | MD5, SHA256, provider manifest, none. |
 | Rate limits | Requests per minute, daily quota, concurrent downloads. |
 | URL expiry | Required for staged providers. |
@@ -567,7 +575,7 @@ Provider adapters should also expose a capability descriptor:
 
 ### 7.3.1 Provider execution policy
 
-Provider behavior must be configuration-driven because each provider can have different authentication, request, order, staging, quota, and download rules.
+Provider behavior must be configuration-driven because each provider route can have different authentication, request, order, staging, quota, mirror, and download rules.
 
 Each provider/source should have an execution policy:
 
@@ -576,7 +584,8 @@ Each provider/source should have an execution policy:
 | `auth_model` | OAuth2, API key, session cookie, mTLS, signed URL, manual token, etc. |
 | `requests_per_minute` | API request throttle. |
 | `max_concurrent_searches` | Search concurrency limit. |
-| `max_concurrent_downloads` | Download concurrency limit. |
+| `max_concurrent_mirrors` | Source COG mirror concurrency limit. |
+| `max_concurrent_downloads` | Download concurrency limit for package/download providers. |
 | `daily_quota` | Optional daily cap for searches, orders, scenes, or bytes. |
 | `retry_policy_json` | Retry count, backoff, jitter, and retryable provider errors. |
 | `staging_policy_json` | Order/poll/re-stage behavior and URL expiry handling. |
@@ -596,22 +605,22 @@ Worker isolation rules:
 
 ### 7.4 MVP provider mapping
 
-| Source | Adapter | MVP state | Notes |
+| Source | Primary route/adapter | MVP state | Notes |
 |---|---|---|---|
-| Sentinel-2 L2A | `cdse` | First vertical slice | Vendor SR and SCL mask make this fastest end-to-end proof. |
+| Sentinel-2 L2A | `earthsearch:sentinel-2-l2a` | First vertical slice | Vendor SR and SCL mask through Earth Search/AWS COGs make this fastest end-to-end proof; CDSE is optional future fallback. |
 | ResourceSat-2A LISS-4 | `bhoonidhi` | Parallel India differentiator | High-resolution VNIR; no SWIR or red edge. |
 | ResourceSat-2A LISS-3 | `bhoonidhi` | Parallel India differentiator | Includes SWIR; useful for NDMI/NDBI. |
 | ResourceSat-2A AWiFS | `bhoonidhi` | Coarse/regional support | Lower resolution; use carefully for small fields. |
-| Landsat 8/9 C2 L2 | `usgs` | MVP continuity/gap-fill | Surface reflectance and QA_PIXEL. |
-| Sentinel-1 GRD | `cdse` | Deferred | SAR-specific pipeline, not NDVI replacement. |
+| Landsat 8/9 C2 L2 | `earthsearch:landsat-c2-l2`, `usgs` fallback | MVP continuity/gap-fill | Surface reflectance and QA_PIXEL; requester-pays access is opt-in. |
+| Sentinel-1 GRD | `earthsearch:sentinel-1-grd` | Deferred | SAR-specific pipeline, not NDVI replacement. |
 
 ### 7.5 Activation gates
 
 A source should only become externally visible when all gates pass:
 
-1. Provider credentials validated.
-2. Search and download tested.
-3. Product metadata parsed.
+1. Provider route access validated, including credential validation only when the route requires credentials.
+2. Search and source mirror/download tested.
+3. Product or STAC metadata parsed.
 4. All available assets/bands inventoried and required bands mapped correctly.
 5. AC/masking profile validated.
 6. COG output validates.
@@ -631,24 +640,24 @@ flowchart TD
   C --> D[Normalize scenes]
   D --> E[Filter by availability, license, cloud metadata]
   E --> F[Create scene and order records]
-  F --> G[Order or stage if needed]
-  G --> H[Download with checksum and resume]
-  H --> I[Register raw package and extract all asset metadata/bands]
-  I --> J[Apply AC, CRS, masking, resampling]
+  F --> G[Order/stage if needed or select source COG assets]
+  G --> H[Mirror source COGs or download packages with checksum]
+  H --> I[Register raw/source assets and all metadata/bands]
+  I --> J[Apply AC or STAC scale/offset, CRS, masking, resampling]
   J --> K[Generate source-aware indices]
   K --> L[Create and validate COGs]
-  L --> M[Register raw, extracted, ARD, QA, raster outputs and STAC items]
+  L --> M[Register raw/source assets, QA, raster outputs and STAC items]
   M --> N[Expose via API and TiTiler if gates pass]
 ```
 
 Backfill requirements:
 
 - Idempotency key per source, AOI, date range, product ID, and processing version.
-- Checkpoints after search, order, download, extraction, processing, and COG registration.
+- Checkpoints after search, order/stage when needed, source mirroring or download, extraction/metadata normalization, processing, and COG registration.
 - Duplicate detection by provider product ID and checksum.
-- Raw provider package registration before extraction or processing.
+- Source asset registration and source COG mirroring before processing for STAC COG providers; raw provider package registration before extraction for package providers.
 - All-band/asset inventory for every supported product.
-- Provider execution-policy enforcement for search, order, poll, and download stages.
+- Provider execution-policy enforcement for search, order, poll, mirror, and download stages.
 - Retryable failures must preserve enough state to resume.
 - Failed products must have explicit status and error category.
 
@@ -744,13 +753,18 @@ Never apply bilinear/cubic resampling to categorical masks.
 Every index calculation must explicitly handle:
 
 - Source-specific scale and offset.
-- Reflectance conversion before index math.
+- No-data, QA, cloud/shadow, saturated, and invalid mask construction before scale/offset.
+- Reflectance conversion only for valid pixels before index math.
 - No-data propagation.
 - Cloud/shadow/invalid mask propagation.
 - Division-by-zero.
 - Saturated pixels.
 - Output clipping to valid index range where appropriate.
 - Formula version recording.
+
+For STAC COG providers, the required order is: read nodata and QA/mask assets, build the validity
+mask, apply scale/offset only to valid pixels, then run index math. This prevents nodata DN values
+from becoming valid negative reflectance when an asset has a negative offset.
 
 ### 9.4 Atmospheric correction profiles
 
@@ -993,7 +1007,7 @@ API rules:
 - Internal/admin APIs are network-isolated and separately authorized.
 - Geometry input is EPSG:4326 unless otherwise declared.
 - Request geometry size and vertex count are capped.
-- API responses never include MinIO paths.
+- API responses never include MinIO paths, object keys, `s3://` URLs, Earth Search hrefs, AWS Open Data hrefs, signed provider URLs, or client-supplied raw COG targets.
 - Every response includes source, date, quality, resolution, and provenance where relevant.
 - Analytics responses include display profile, threshold profile, and class-area statistics when a classification profile is applied.
 - Time-series/progressive analytics responses include source, sensor, resolution, quality, and harmonization flags per point.
@@ -1015,7 +1029,7 @@ For field index requests:
 3. API resolves the visualization profile and threshold profile for the requested index/source/crop context.
 4. API creates or resolves opaque `layerId`.
 5. API returns signed tile/stat URLs, continuous statistics, class-area statistics, legend metadata, and profile versions.
-6. TiTiler serves only authorized layer references, not raw paths.
+6. TiTiler serves only authorized layer references, not raw paths or external provider hrefs.
 
 For progressive NDVI requests:
 
@@ -1281,6 +1295,7 @@ akasha/
   config/
   catalog/
   providers/
+    earthsearch/
     cdse/
     bhoonidhi/
     usgs/
@@ -1336,9 +1351,9 @@ These extend the high-level plan's phases with platform gates.
 |---|---|
 | Phase 0 - Setup and sample spike | Capture real product structure, size, masks, scale/offsets, and provider staging behavior; confirm Azure VM parity. |
 | Phase 1 - Core foundation | Compose stack, Alembic, PostGIS/pgSTAC, MinIO, Celery, scheduler, reverse proxy, secrets, observability, backups, and restore test. |
-| Phase 2 - Sentinel-2 vertical slice | CDSE adapter, S2 L2A/SCL profile, COGs, TiTiler-PgSTAC, field-index API, signed URLs. |
+| Phase 2 - Sentinel-2 vertical slice | Earth Search STAC adapter, AOI-complete source COG mirroring, S2 L2A/SCL profile, derived COGs, TiTiler-PgSTAC, field-index API, signed URLs. |
 | Phase 3 - ResourceSat | Bhoonidhi adapter, order/staging state machine, per-instrument profiles, DOS/6S, custom mask, S2 cross-validation. |
-| Phase 4 - Landsat | USGS adapter, QA_PIXEL, multi-source best-scene selection, time-series API. |
+| Phase 4 - Landsat | Earth Search Landsat route plus USGS fallback, QA_PIXEL, requester-pays guardrails, multi-source best-scene selection, time-series API. |
 | Phase 5 - Automation | Revisit-aware scheduler, quotas, retry dashboard, retention jobs, provider rate limits. |
 | Phase 6 - SAR | Separate SAR module, not optical index fallback. |
 | Phase 7 - Production hardening | HA/DR decision, security review, load test, restore drill, runbook, static IP whitelisting. |
@@ -1388,11 +1403,11 @@ These extend the high-level plan's phases with platform gates.
 
 ## 22. Final recommended direction
 
-Build the MVP as a Docker Compose based, Python/FastAPI/GDAL satellite ingestion data lake and processing platform on a Linux VM with PostGIS/pgSTAC metadata, MinIO object storage, Celery workers, provider execution policies, TiTiler-PgSTAC serving, progressive NDVI/time-series analytics, versioned visualization/threshold profiles, class-area statistics, and Prometheus/Grafana/Loki observability. Use Azure Linux VM as a production-like integration environment with the same containers and Ansible setup. Keep providers modular through a source registry and adapter contract, retain original raw provider packages by default, gate every source by validation and license exposure, store per-scene COG outputs, and resolve field analytics through deterministic best-scene selection without treating generic index classes as validated agronomic diagnosis.
+Build the MVP as a Docker Compose based, Python/FastAPI/GDAL satellite ingestion data lake and processing platform on a Linux VM with PostGIS/pgSTAC metadata, MinIO object storage, Celery workers, provider-route execution policies, TiTiler-PgSTAC serving, progressive NDVI/time-series analytics, versioned visualization/threshold profiles, class-area statistics, and Prometheus/Grafana/Loki observability. Use Azure Linux VM as a production-like integration environment with the same containers and Ansible setup. Keep providers modular through a source registry, provider routes, and adapter contracts; retain reproducible source inputs by default, including source STAC manifests and AOI-complete source COG mirrors for Earth Search; gate every source by validation and license exposure; store per-scene derived COG outputs; and resolve field analytics through deterministic best-scene selection without treating generic index classes as validated agronomic diagnosis.
 
 Final architecture review:
 
-1. The architecture follows the remote-sensing processing chain: provider input, raw lake registration, metadata normalization, all-band inventory, correction, masking, index generation, COG creation, visualization/classification, zonal statistics, progressive time-series analytics, and API/tile serving.
+1. The architecture follows the remote-sensing processing chain: provider input, raw/source lake registration, metadata normalization, all-band inventory, source mirroring or package download, correction/scale-offset handling, masking, index generation, COG creation, visualization/classification, zonal statistics, progressive time-series analytics, and API/tile serving.
 2. The remaining gaps are operational or calibration inputs, not architecture blockers: AOI, provider access, provider-specific execution values, ResourceSat AC validation, default legends, crop-specific thresholds, ancillary weather/soil/crop data, raw cleanup governance, and first operator surface.
 3. The highest scientific risk remains ResourceSat atmospheric correction and cloud masking; keep outputs exposure-gated until cross-validation passes.
 4. The highest product-risk is over-interpreting generic index thresholds as disease, nutrient, water-stress, yield, or prescription advice. Keep those as later calibrated interpretation modules.
