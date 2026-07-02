@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: akasha
+          POSTGRES_USER: akasha
+          POSTGRES_PASSWORD: akasha
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U akasha -d akasha"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      AKASHA_ENVIRONMENT: test
+      AKASHA_DATABASE_URL: postgresql+psycopg://akasha:akasha@localhost:5432/akasha
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check .
+      - name: Test
+        run: pytest
+      - name: Validate Compose config
+        run: docker compose -f deploy/docker-compose.yml -f deploy/compose.dev.yml config --quiet
+      - name: Initialize pgSTAC
+        run: |
+          docker run --rm --network host \
+            -e PGHOST=localhost \
+            -e PGDATABASE=akasha \
+            -e PGUSER=akasha \
+            -e PGPASSWORD=akasha \
+            ghcr.io/stac-utils/pgstac:v0.7.10 migrate
+      - name: Validate migrations
+        run: alembic upgrade head
+      - name: Seed Phase 1 catalog
+        run: python -m akasha.catalog.seed_db
+      - name: Build API image
+        run: docker build -f docker/api.Dockerfile -t akasha-ingestion-api:ci .
+      - name: Build worker image
+        run: docker build -f docker/worker.Dockerfile -t akasha-ingestion-worker:ci .

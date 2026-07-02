@@ -1,0 +1,73 @@
+---
+- name: Bootstrap Akasha ingestion host
+  hosts: akasha_dev
+  become: true
+  vars:
+    akasha_root: /srv/akasha
+    akasha_scratch: /scratch/akasha
+  tasks:
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - git
+          - jq
+          - unzip
+          - rsync
+          - ufw
+          - fail2ban
+          - chrony
+          - prometheus-node-exporter
+        state: present
+        update_cache: true
+
+    - name: Create Akasha directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0750"
+      loop:
+        - "{{ akasha_root }}"
+        - "{{ akasha_root }}/postgres"
+        - "{{ akasha_root }}/redis"
+        - "{{ akasha_root }}/minio"
+        - "{{ akasha_root }}/monitoring"
+        - "{{ akasha_root }}/backups"
+        - "{{ akasha_root }}/secrets"
+        - "{{ akasha_scratch }}"
+
+    - name: Create monitoring service directories with container-writable owners
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "0750"
+      loop:
+        - path: "{{ akasha_root }}/monitoring/prometheus"
+          owner: "65534"
+          group: "65534"
+        - path: "{{ akasha_root }}/monitoring/grafana"
+          owner: "472"
+          group: "472"
+        - path: "{{ akasha_root }}/monitoring/loki"
+          owner: "10001"
+          group: "10001"
+
+    - name: Enable UFW default deny incoming
+      community.general.ufw:
+        direction: incoming
+        policy: deny
+
+    - name: Allow SSH
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        proto: tcp
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled

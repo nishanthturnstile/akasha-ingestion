@@ -1,0 +1,8 @@
+route:
+  receiver: default
+
+receivers:
+  - name: default
+    webhook_configs:
+      - url: http://host.docker.internal:19093/akasha-alerts
+        send_resolved: true

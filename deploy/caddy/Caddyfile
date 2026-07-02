@@ -1,0 +1,17 @@
+:80 {
+  encode zstd gzip
+
+  handle /health {
+    reverse_proxy api:8000
+  }
+
+  handle /api/* {
+    reverse_proxy api:8000
+  }
+
+  handle /metrics {
+    respond "not found" 404
+  }
+
+  respond "not found" 404
+}

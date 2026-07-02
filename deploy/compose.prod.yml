@@ -1,0 +1,14 @@
+services:
+  api:
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+
+  worker-heavy:
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G

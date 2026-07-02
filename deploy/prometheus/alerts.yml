@@ -1,0 +1,42 @@
+groups:
+  - name: akasha-phase1
+    rules:
+      - alert: AkashaApiDown
+        expr: up{job="api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Akasha API is down
+
+      - alert: AkashaPostgresExporterDown
+        expr: up{job="postgres"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Akasha Postgres exporter is down
+
+      - alert: AkashaRedisExporterDown
+        expr: up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Akasha Redis exporter is down
+
+      - alert: AkashaNodeExporterDown
+        expr: up{job="node"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Akasha node exporter is down
+
+      - alert: AkashaContainerMetricsDown
+        expr: up{job="cadvisor"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Akasha cAdvisor metrics are down

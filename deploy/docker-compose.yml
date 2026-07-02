@@ -1,0 +1,307 @@
+name: akasha-ingestion
+
+x-app-env: &app-env
+  AKASHA_ENVIRONMENT: ${AKASHA_ENVIRONMENT:-dev}
+  AKASHA_RUNTIME_BACKEND: external
+  AKASHA_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-akasha}:${POSTGRES_PASSWORD:-akasha}@postgres:5432/${POSTGRES_DB:-akasha}
+  AKASHA_REDIS_URL: redis://redis:6379/0
+  AKASHA_MINIO_ENDPOINT: minio:9000
+  AKASHA_MINIO_BUCKET: ${AKASHA_MINIO_BUCKET:-akasha-data}
+  AKASHA_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-akasha}
+  AKASHA_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change-me}
+  AKASHA_API_KEY_HASHES: ${AKASHA_API_KEY_HASHES:-}
+  AKASHA_AOI_GEOJSON_PATH: /app/docs/phase-0/bangalore-aoi.geojson
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks: [edge, internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    profiles: ["tools"]
+    environment: *app-env
+    depends_on:
+      pgstac-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  pgstac-migrate:
+    image: ghcr.io/stac-utils/pgstac:v0.7.10
+    command: ["migrate"]
+    profiles: ["tools"]
+    environment:
+      PGHOST: postgres
+      PGDATABASE: ${POSTGRES_DB:-akasha}
+      PGUSER: ${POSTGRES_USER:-akasha}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-akasha}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  seed:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    command: ["python", "-m", "akasha.catalog.seed_db"]
+    profiles: ["tools"]
+    environment: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [internal]
+
+  scheduler:
+    build:
+      context: ..
+      dockerfile: docker/worker.Dockerfile
+    command: ["celery", "-A", "akasha.jobs.celery_app.celery_app", "beat", "--loglevel=INFO"]
+    environment: *app-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [internal]
+
+  worker-search:
+    build:
+      context: ..
+      dockerfile: docker/worker.Dockerfile
+    command: ["celery", "-A", "akasha.jobs.celery_app.celery_app", "worker", "--loglevel=INFO", "-Q", "search,maintenance"]
+    environment: *app-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [internal]
+
+  worker-download:
+    build:
+      context: ..
+      dockerfile: docker/worker.Dockerfile
+    command: ["celery", "-A", "akasha.jobs.celery_app.celery_app", "worker", "--loglevel=INFO", "-Q", "download"]
+    environment: *app-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [internal]
+
+  worker-process:
+    build:
+      context: ..
+      dockerfile: docker/worker.Dockerfile
+    command: ["celery", "-A", "akasha.jobs.celery_app.celery_app", "worker", "--loglevel=INFO", "-Q", "preprocess,cog,stats"]
+    environment: *app-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [internal]
+
+  worker-heavy:
+    build:
+      context: ..
+      dockerfile: docker/worker.Dockerfile
+    command: ["celery", "-A", "akasha.jobs.celery_app.celery_app", "worker", "--loglevel=INFO", "-Q", "heavy-cpu", "--concurrency=1"]
+    environment: *app-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [internal]
+
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-akasha}
+      POSTGRES_USER: ${POSTGRES_USER:-akasha}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-akasha}
+    volumes:
+      - ${AKASHA_DATA_ROOT:-/srv/akasha}/postgres:/var/lib/postgresql/data
+      - postgres-run:/var/run/postgresql
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-akasha} -d ${POSTGRES_DB:-akasha}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ${AKASHA_DATA_ROOT:-/srv/akasha}/redis:/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:RELEASE.2024-07-16T23-46-41Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-akasha}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me}
+    volumes:
+      - ${AKASHA_DATA_ROOT:-/srv/akasha}/minio:/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  titiler:
+    image: ghcr.io/developmentseed/titiler:0.21.1
+    environment:
+      PORT: 8000
+      AWS_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-akasha}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-change-me}
+      AWS_VIRTUAL_HOSTING: "FALSE"
+    networks: [internal]
+
+  caddy:
+    image: caddy:2.8-alpine
+    ports:
+      - "${AKASHA_HTTP_PORT:-8080}:80"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${AKASHA_DATA_ROOT:-/srv/akasha}/caddy/data:/data
+      - ${AKASHA_DATA_ROOT:-/srv/akasha}/caddy/config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [edge, internal]
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ${AKASHA_DATA_ROOT:-/srv/akasha}/monitoring/prometheus:/prometheus
+    networks: [internal]
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    command: ["--config.file=/etc/blackbox_exporter/config.yml"]
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    networks: [internal]
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:-akasha}:${POSTGRES_PASSWORD:-akasha}@postgres:5432/${POSTGRES_DB:-akasha}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.63.0
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [internal]
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    networks: [internal]
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks: [internal]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${AKASHA_DATA_ROOT:-/srv/akasha}/monitoring/grafana:/var/lib/grafana
+    networks: [internal]
+
+  loki:
+    image: grafana/loki:3.2.0
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./loki/local-config.yaml:/etc/loki/local-config.yaml:ro
+      - ${AKASHA_DATA_ROOT:-/srv/akasha}/monitoring/loki:/loki
+    networks: [internal]
+
+  promtail:
+    image: grafana/promtail:3.2.0
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ./promtail/config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    networks: [internal]
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [internal]
+
+  flower:
+    image: mher/flower:2.0
+    command: ["celery", "--broker=redis://redis:6379/0", "flower", "--port=5555"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [internal]
+
+  pgbackrest:
+    image: pgbackrest/pgbackrest:2.53
+    profiles: ["backup"]
+    volumes:
+      - ./pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - ${AKASHA_DATA_ROOT:-/srv/akasha}/backups/pgbackrest:/var/lib/pgbackrest
+      - ${AKASHA_DATA_ROOT:-/srv/akasha}/postgres:/var/lib/postgresql/data:ro
+      - postgres-run:/var/run/postgresql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+networks:
+  edge:
+  internal:
+    internal: true
+
+volumes:
+  postgres-run:
