@@ -27,6 +27,7 @@ class Job:
     date_end: str
     object_path: str | None = None
     checksum_sha256: str | None = None
+    result_metadata: dict[str, object] = field(default_factory=dict)
     error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -92,11 +93,19 @@ class InMemoryJobStore:
     def health_check(self) -> bool:
         return True
 
-    def mark_completed(self, job: Job, *, object_path: str, checksum_sha256: str) -> Job:
+    def mark_completed(
+        self,
+        job: Job,
+        *,
+        object_path: str | None = None,
+        checksum_sha256: str | None = None,
+        result_metadata: dict[str, object] | None = None,
+    ) -> Job:
         with self._lock:
             job.status = JobStatus.COMPLETED
             job.object_path = object_path
             job.checksum_sha256 = checksum_sha256
+            job.result_metadata = result_metadata or {}
             job.updated_at = datetime.now(UTC)
             return job
 

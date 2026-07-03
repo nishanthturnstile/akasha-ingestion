@@ -61,6 +61,71 @@ def test_mock_sync_is_idempotent() -> None:
     assert first_job["asset_ref"].startswith("asset:")
 
 
+def test_sentinel2_backfill_sync_is_idempotent_and_returns_summary() -> None:
+    api_key = "test-akasha-key"
+    app = create_app(
+        Settings(
+            environment=Environment.TEST,
+            runtime_backend=RuntimeBackend.MEMORY,
+            task_always_eager=True,
+            api_key_hashes=f"test:{hash_api_key(api_key)}",
+        )
+    )
+    client = TestClient(app)
+    headers = {"X-API-Key": api_key}
+    payload = {
+        "source_id": "sentinel-2-l2a",
+        "provider_route": "earthsearch:sentinel-2-l2a",
+        "aoi_id": "bangalore_60km_geodesic_aoi",
+        "date_start": "2026-01-01",
+        "date_end": "2026-06-30",
+        "job_type": "sentinel2_backfill",
+        "mode": "full_pipeline",
+    }
+
+    first = client.post("/api/v1/ingestion/sync", headers=headers, json=payload)
+    second = client.post("/api/v1/ingestion/sync", headers=headers, json=payload)
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    first_job = first.json()["data"]
+    second_job = second.json()["data"]
+    assert first_job["job_id"] == second_job["job_id"]
+    assert first_job["status"] == "completed"
+    assert first_job["asset_ref"] is None
+    assert first_job["result_metadata"]["mode"] == "full_pipeline"
+    assert first_job["result_metadata"]["backfill_summary"]["searched_count"] == 0
+
+
+def test_sentinel2_backfill_rejects_wrong_provider_route() -> None:
+    api_key = "test-akasha-key"
+    app = create_app(
+        Settings(
+            environment=Environment.TEST,
+            runtime_backend=RuntimeBackend.MEMORY,
+            task_always_eager=True,
+            api_key_hashes=f"test:{hash_api_key(api_key)}",
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/ingestion/sync",
+        headers={"X-API-Key": api_key},
+        json={
+            "source_id": "sentinel-2-l2a",
+            "provider_route": "cdse:sentinel-2-l2a",
+            "aoi_id": "bangalore_60km_geodesic_aoi",
+            "date_start": "2026-01-01",
+            "date_end": "2026-06-30",
+            "job_type": "sentinel2_backfill",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "earthsearch:sentinel-2-l2a" in response.json()["error"]["message"]
+
+
 def test_sync_rejects_reversed_date_range() -> None:
     api_key = "test-akasha-key"
     app = create_app(

@@ -3,6 +3,13 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
 
+  # The Sentinel-2 backfill task (search + source COG mirroring + processing) runs on the
+  # "search" queue, so worker-search is the only service that makes outbound calls to Earth
+  # Search STAC and AWS-hosted COGs. The base "internal" network is egress-blocked
+  # (internal: true), so attach worker-search to "edge" for live provider acceptance.
+  worker-search:
+    networks: [edge, internal]
+
   grafana:
     user: "0:0"
     networks: [edge, internal]

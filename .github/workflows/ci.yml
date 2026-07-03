@@ -50,9 +50,15 @@ jobs:
             sh -lc "if psql -X -q -tAc \"SELECT 1 FROM pg_namespace WHERE nspname = 'pgstac'\" | grep -q 1; then echo 'pgSTAC already initialized'; else /opt/bin/initpgstac; fi"
       - name: Validate migrations
         run: alembic upgrade head
-      - name: Seed Phase 1 catalog
+      - name: Seed Phase 2 catalog
         run: python -m akasha.catalog.seed_db
       - name: Build API image
         run: docker build -f docker/api.Dockerfile -t akasha-ingestion-api:ci .
       - name: Build worker image
         run: docker build -f docker/worker.Dockerfile -t akasha-ingestion-worker:ci .
+      - name: Validate API geospatial imports
+        run: docker run --rm akasha-ingestion-api:ci python -c "import httpx, numpy, pyproj, pypgstac, pystac, pystac_client, rasterio, rio_cogeo, shapely"
+      - name: Validate worker COG tooling
+        run: |
+          docker run --rm akasha-ingestion-worker:ci python -c "import numpy, pypgstac, pystac, pystac_client, rasterio, rio_cogeo, shapely"
+          docker run --rm akasha-ingestion-worker:ci rio cogeo --help >/dev/null

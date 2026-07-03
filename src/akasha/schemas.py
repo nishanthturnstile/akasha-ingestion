@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Generic, Literal, Self, TypeVar
+from typing import Any, Generic, Literal, Self, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -46,12 +46,23 @@ class SyncRequest(BaseModel):
     aoi_id: str = Field(min_length=1)
     date_start: date
     date_end: date
-    job_type: Literal["mock_sync"] = "mock_sync"
+    job_type: Literal["mock_sync", "sentinel2_backfill"] = "mock_sync"
+    provider_route: str | None = Field(default=None, min_length=1)
+    mode: Literal["metadata_only", "mirror_only", "full_pipeline"] = "metadata_only"
 
     @model_validator(mode="after")
     def validate_date_range(self) -> Self:
         if self.date_end < self.date_start:
             raise ValueError("date_end must be on or after date_start")
+        if self.job_type == "sentinel2_backfill":
+            if self.source_id != "sentinel-2-l2a":
+                raise ValueError("sentinel2_backfill requires source_id sentinel-2-l2a")
+            if self.provider_route != "earthsearch:sentinel-2-l2a":
+                raise ValueError(
+                    "sentinel2_backfill requires provider_route earthsearch:sentinel-2-l2a"
+                )
+        elif self.provider_route is not None:
+            raise ValueError("provider_route is only supported for sentinel2_backfill")
         return self
 
 
@@ -66,6 +77,7 @@ class JobResponse(BaseModel):
     date_end: str
     asset_ref: str | None = None
     checksum_sha256: str | None = None
+    result_metadata: dict[str, object] = Field(default_factory=dict)
     error: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -83,7 +95,96 @@ class JobResponse(BaseModel):
             date_end=job.date_end,
             asset_ref=f"asset:{job.job_id}" if job.object_path else None,
             checksum_sha256=job.checksum_sha256,
+            result_metadata=job.result_metadata,
             error=job.error,
             created_at=job.created_at,
             updated_at=job.updated_at,
         )
+
+
+class FieldIndexRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    geometry: dict[str, Any]
+    crs: Literal["EPSG:4326"] = "EPSG:4326"
+    index: Literal["NDVI", "MSAVI", "NDMI", "NDBI", "NDRE", "RECI"]
+    date: date
+    fallbackPolicy: Literal["nearest_valid_scene"] = "nearest_valid_scene"
+    maxCloudPercentage: float = Field(default=20.0, ge=0, le=100)
+    fieldId: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_geometry(self) -> Self:
+        geometry_type = self.geometry.get("type")
+        if geometry_type not in {"Polygon", "MultiPolygon"}:
+            raise ValueError("geometry must be a Polygon or MultiPolygon")
+        coordinates = self.geometry.get("coordinates")
+        if not isinstance(coordinates, list) or not coordinates:
+            raise ValueError("geometry coordinates are required")
+        return self
+
+
+class FieldIndexUnavailableResponse(BaseModel):
+    status: Literal["UNAVAILABLE"] = "UNAVAILABLE"
+    index: str
+    requestedDate: date
+    reason: str
+    searchedSources: list[str]
+
+
+class FieldIndexResolution(BaseModel):
+    nativeMeters: float
+    processingMeters: float
+    displayMeters: float
+
+
+class FieldIndexStatistics(BaseModel):
+    min: float | None
+    max: float | None
+    mean: float | None
+    median: float | None
+    stdDev: float | None
+    usablePixelPercentage: float
+    cloudPercentage: float | None
+
+
+class FieldIndexSelection(BaseModel):
+    windowDays: int
+    rule: str
+    validPixelCount: int
+
+
+class FieldIndexVisualization(BaseModel):
+    displayProfile: str | None
+    thresholdProfile: str | None
+    legend: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class FieldIndexQuality(BaseModel):
+    status: Literal["GOOD", "WARN", "UNAVAILABLE"]
+    reason: str
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FieldIndexAvailableResponse(BaseModel):
+    status: Literal["AVAILABLE"] = "AVAILABLE"
+    queryId: str
+    fieldId: str | None = None
+    index: str
+    requestedDate: date
+    selectedSceneDate: date
+    source: str
+    providerRoute: str
+    resolution: FieldIndexResolution
+    layerId: str
+    tileUrl: str
+    statsUrl: str
+    selection: FieldIndexSelection
+    statistics: FieldIndexStatistics
+    classStatistics: list[dict[str, Any]] = Field(default_factory=list)
+    visualization: FieldIndexVisualization
+    versions: dict[str, str]
+    quality: FieldIndexQuality
+
+
+FieldIndexResponse = FieldIndexAvailableResponse | FieldIndexUnavailableResponse

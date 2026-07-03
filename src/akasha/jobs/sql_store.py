@@ -32,6 +32,7 @@ def _row_to_job(row: Any) -> Job:
         date_end=params.get("date_end", ""),
         object_path=result.get("object_path"),
         checksum_sha256=result.get("checksum_sha256"),
+        result_metadata=_public_result_metadata(result),
         error=row.error_message,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -128,8 +129,17 @@ class PostgresJobStore:
     def mark_running(self, job: Job) -> Job:
         return self._update_status(job.job_id, JobStatus.RUNNING, started=True)
 
-    def mark_completed(self, job: Job, *, object_path: str, checksum_sha256: str) -> Job:
-        result = dumps({"object_path": object_path, "checksum_sha256": checksum_sha256})
+    def mark_completed(
+        self,
+        job: Job,
+        *,
+        object_path: str | None = None,
+        checksum_sha256: str | None = None,
+        result_metadata: dict[str, object] | None = None,
+    ) -> Job:
+        result = {"object_path": object_path, "checksum_sha256": checksum_sha256}
+        if result_metadata:
+            result.update(result_metadata)
         with self._engine.begin() as connection:
             row = connection.execute(
                 text(
@@ -143,7 +153,7 @@ class PostgresJobStore:
                     RETURNING *
                     """
                 ),
-                {"job_id": job.job_id, "result_metadata": result},
+                {"job_id": job.job_id, "result_metadata": dumps(result)},
             ).mappings().one()
         return _row_to_job(row)
 
@@ -203,3 +213,11 @@ def _get_active_job_by_idempotency(connection: Any, idempotency_key: str) -> Any
         ),
         {"idempotency_key": idempotency_key},
     ).mappings().first()
+
+
+def _public_result_metadata(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in result.items()
+        if key not in {"object_path", "checksum_sha256"}
+    }

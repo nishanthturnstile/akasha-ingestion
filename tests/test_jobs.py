@@ -18,6 +18,7 @@ class NoMarkQueuedStore(InMemoryJobStore):
 
 def test_celery_mock_task_is_registered() -> None:
     assert "akasha.jobs.tasks.mock_sync" in celery_app.tasks
+    assert "akasha.jobs.sentinel2_tasks.backfill" in celery_app.tasks
 
 
 def test_failed_idempotent_job_can_be_retried() -> None:

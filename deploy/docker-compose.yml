@@ -3,6 +3,7 @@ name: akasha-ingestion
 x-app-env: &app-env
   AKASHA_ENVIRONMENT: ${AKASHA_ENVIRONMENT:-dev}
   AKASHA_RUNTIME_BACKEND: external
+  AKASHA_TASK_ALWAYS_EAGER: ${AKASHA_TASK_ALWAYS_EAGER:-false}
   AKASHA_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-akasha}:${POSTGRES_PASSWORD:-akasha}@postgres:5432/${POSTGRES_DB:-akasha}
   AKASHA_REDIS_URL: redis://redis:6379/0
   AKASHA_MINIO_ENDPOINT: minio:9000
@@ -11,6 +12,34 @@ x-app-env: &app-env
   AKASHA_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change-me}
   AKASHA_API_KEY_HASHES: ${AKASHA_API_KEY_HASHES:-}
   AKASHA_AOI_GEOJSON_PATH: /app/docs/phase-0/bangalore-aoi.geojson
+  AKASHA_EARTHSEARCH_API_URL: ${AKASHA_EARTHSEARCH_API_URL:-https://earth-search.aws.element84.com/v1}
+  AKASHA_EARTHSEARCH_TIMEOUT_SECONDS: ${AKASHA_EARTHSEARCH_TIMEOUT_SECONDS:-30}
+  AKASHA_EARTHSEARCH_PAGE_SIZE: ${AKASHA_EARTHSEARCH_PAGE_SIZE:-100}
+  AKASHA_SOURCE_MIRROR_MODE: ${AKASHA_SOURCE_MIRROR_MODE:-aoi_clipped}
+  AKASHA_SOURCE_MIRROR_MAX_BYTES_PER_RUN: ${AKASHA_SOURCE_MIRROR_MAX_BYTES_PER_RUN:-}
+  AKASHA_SOURCE_MIRROR_REQUIRED_HEADROOM_BYTES: ${AKASHA_SOURCE_MIRROR_REQUIRED_HEADROOM_BYTES:-0}
+  AKASHA_ENABLE_LANDSAT_REQUESTER_PAYS: ${AKASHA_ENABLE_LANDSAT_REQUESTER_PAYS:-false}
+  AKASHA_AWS_REGION: ${AKASHA_AWS_REGION:-us-west-2}
+  AKASHA_SIGNING_SECRET: ${AKASHA_SIGNING_SECRET:-change-me}
+  AKASHA_SIGNED_URL_TTL_SECONDS: ${AKASHA_SIGNED_URL_TTL_SECONDS:-900}
+  AKASHA_SCRATCH_DIR: /tmp/akasha
+  AKASHA_GDAL_CACHEMAX_MB: ${AKASHA_GDAL_CACHEMAX_MB:-512}
+  AKASHA_FIELD_MAX_VERTICES: ${AKASHA_FIELD_MAX_VERTICES:-5000}
+  AKASHA_FIELD_MAX_AREA_SQ_KM: ${AKASHA_FIELD_MAX_AREA_SQ_KM:-25}
+  AKASHA_FIELD_MIN_USABLE_PIXELS: ${AKASHA_FIELD_MIN_USABLE_PIXELS:-1}
+  AKASHA_MAX_CANDIDATE_SCENES: ${AKASHA_MAX_CANDIDATE_SCENES:-20}
+  AKASHA_BACKFILL_SEARCH_ITEM_CAP: ${AKASHA_BACKFILL_SEARCH_ITEM_CAP:-1000}
+  AKASHA_FIELD_USABLE_PIXEL_THRESHOLD: ${AKASHA_FIELD_USABLE_PIXEL_THRESHOLD:-0.80}
+  AKASHA_FIELD_MAX_CLOUD_PERCENTAGE: ${AKASHA_FIELD_MAX_CLOUD_PERCENTAGE:-20}
+  AKASHA_SENTINEL2_PROFILE_VERSION: ${AKASHA_SENTINEL2_PROFILE_VERSION:-sentinel2-l2a-earthsearch-v1}
+  AKASHA_SELECTION_POLICY_VERSION: ${AKASHA_SELECTION_POLICY_VERSION:-field-selection-v1}
+  AKASHA_LIVE_PROVIDER_TESTS: ${AKASHA_LIVE_PROVIDER_TESTS:-false}
+  GDAL_CACHEMAX: ${AKASHA_GDAL_CACHEMAX_MB:-512}
+  GDAL_DISABLE_READDIR_ON_OPEN: EMPTY_DIR
+  CPL_VSIL_CURL_ALLOWED_EXTENSIONS: .tif,.tiff
+
+x-app-volumes: &app-volumes
+  - ${AKASHA_DATA_ROOT:-/srv/akasha}/scratch:/tmp/akasha
 
 services:
   api:
@@ -18,6 +47,7 @@ services:
       context: ..
       dockerfile: docker/api.Dockerfile
     environment: *app-env
+    volumes: *app-volumes
     depends_on:
       postgres:
         condition: service_healthy
@@ -27,7 +57,13 @@ services:
         condition: service_healthy
     networks: [edge, internal]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -86,8 +122,16 @@ services:
     build:
       context: ..
       dockerfile: docker/worker.Dockerfile
-    command: ["celery", "-A", "akasha.jobs.celery_app.celery_app", "beat", "--loglevel=INFO"]
+    command:
+      [
+        "celery",
+        "-A",
+        "akasha.jobs.celery_app.celery_app",
+        "beat",
+        "--loglevel=INFO",
+      ]
     environment: *app-env
+    volumes: *app-volumes
     depends_on:
       redis:
         condition: service_healthy
@@ -97,8 +141,18 @@ services:
     build:
       context: ..
       dockerfile: docker/worker.Dockerfile
-    command: ["celery", "-A", "akasha.jobs.celery_app.celery_app", "worker", "--loglevel=INFO", "-Q", "search,maintenance"]
+    command:
+      [
+        "celery",
+        "-A",
+        "akasha.jobs.celery_app.celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "-Q",
+        "search,maintenance",
+      ]
     environment: *app-env
+    volumes: *app-volumes
     depends_on:
       redis:
         condition: service_healthy
@@ -108,8 +162,18 @@ services:
     build:
       context: ..
       dockerfile: docker/worker.Dockerfile
-    command: ["celery", "-A", "akasha.jobs.celery_app.celery_app", "worker", "--loglevel=INFO", "-Q", "download"]
+    command:
+      [
+        "celery",
+        "-A",
+        "akasha.jobs.celery_app.celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "-Q",
+        "download",
+      ]
     environment: *app-env
+    volumes: *app-volumes
     depends_on:
       redis:
         condition: service_healthy
@@ -119,8 +183,18 @@ services:
     build:
       context: ..
       dockerfile: docker/worker.Dockerfile
-    command: ["celery", "-A", "akasha.jobs.celery_app.celery_app", "worker", "--loglevel=INFO", "-Q", "preprocess,cog,stats"]
+    command:
+      [
+        "celery",
+        "-A",
+        "akasha.jobs.celery_app.celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "-Q",
+        "preprocess,cog,stats",
+      ]
     environment: *app-env
+    volumes: *app-volumes
     depends_on:
       redis:
         condition: service_healthy
@@ -130,8 +204,19 @@ services:
     build:
       context: ..
       dockerfile: docker/worker.Dockerfile
-    command: ["celery", "-A", "akasha.jobs.celery_app.celery_app", "worker", "--loglevel=INFO", "-Q", "heavy-cpu", "--concurrency=1"]
+    command:
+      [
+        "celery",
+        "-A",
+        "akasha.jobs.celery_app.celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "-Q",
+        "heavy-cpu",
+        "--concurrency=1",
+      ]
     environment: *app-env
+    volumes: *app-volumes
     depends_on:
       redis:
         condition: service_healthy
@@ -148,7 +233,11 @@ services:
       - postgres-run:/var/run/postgresql
     networks: [internal]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-akasha} -d ${POSTGRES_DB:-akasha}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-akasha} -d ${POSTGRES_DB:-akasha}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -181,15 +270,24 @@ services:
       retries: 5
 
   titiler:
-    image: ghcr.io/developmentseed/titiler:0.21.1
+    image: ghcr.io/stac-utils/titiler-pgstac:1.8.0
     environment:
       PORT: 8000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-akasha}:${POSTGRES_PASSWORD:-akasha}@postgres:5432/${POSTGRES_DB:-akasha}
       AWS_ENDPOINT_URL: http://minio:9000
       AWS_S3_ENDPOINT: minio:9000
       AWS_HTTPS: "NO"
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-akasha}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-change-me}
       AWS_VIRTUAL_HOSTING: "FALSE"
+      GDAL_CACHEMAX: ${AKASHA_GDAL_CACHEMAX_MB:-512}
+      GDAL_DISABLE_READDIR_ON_OPEN: EMPTY_DIR
+      CPL_VSIL_CURL_ALLOWED_EXTENSIONS: .tif,.tiff
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     networks: [internal]
 
   caddy:
@@ -291,7 +389,8 @@ services:
 
   flower:
     image: mher/flower:2.0
-    command: ["celery", "--broker=redis://redis:6379/0", "flower", "--port=5555"]
+    command:
+      ["celery", "--broker=redis://redis:6379/0", "flower", "--port=5555"]
     depends_on:
       redis:
         condition: service_healthy

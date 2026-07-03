@@ -9,6 +9,26 @@
     reverse_proxy api:8000
   }
 
+  handle /tiles/* {
+    reverse_proxy api:8000
+  }
+
+  handle /collections/* {
+    respond "not found" 404
+  }
+
+  handle /items/* {
+    respond "not found" 404
+  }
+
+  handle /searches/* {
+    respond "not found" 404
+  }
+
+  handle /tilejson* {
+    respond "not found" 404
+  }
+
   handle /metrics {
     respond "not found" 404
   }
