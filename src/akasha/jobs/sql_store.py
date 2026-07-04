@@ -36,6 +36,7 @@ def _row_to_job(row: Any) -> Job:
         error=row.error_message,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        completed_at=row.completed_at,
     )
 
 

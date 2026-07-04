@@ -1,0 +1,31 @@
+{
+  "success": true,
+  "data": {
+    "status": "AVAILABLE",
+    "sourceId": "sentinel-2-l2a",
+    "aoiId": "bangalore_60km_geodesic_aoi",
+    "providerRoute": "earthsearch:sentinel-2-l2a",
+    "latestProcessedSceneDate": "2026-01-13",
+    "latestSuccessfulJobCompletedAt": "2026-01-14T02:30:00Z",
+    "lastSuccessfulJobAt": "2026-01-14T02:30:00Z",
+    "staleAfter": "2037-06-11T18:30:00Z",
+    "freshnessMaxAgeHours": 100000,
+    "availableDates": ["2026-01-13", "2026-01-06"],
+    "indexCoverage": {
+      "NDVI": {
+        "available": true,
+        "dateCount": 2,
+        "coveragePercent": 100.0
+      }
+    },
+    "lastSuccessfulJob": {
+      "jobId": "job_01JZ8H",
+      "status": "SUCCEEDED",
+      "completedAt": "2026-01-14T02:30:00Z"
+    },
+    "unavailableReasons": [],
+    "reasonCode": null,
+    "reason": null
+  },
+  "error": null
+}

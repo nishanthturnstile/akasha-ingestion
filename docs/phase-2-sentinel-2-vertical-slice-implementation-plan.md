@@ -1566,6 +1566,46 @@ Live acceptance minimum:
   configured limits, or produces categorized retryable failures for provider/data issues;
 - all failures are represented in `backfill_runs.summary_json`.
 
+### 20.6 Bangalore readiness and weekly preload policy
+
+The app integration readiness contract is:
+
+```text
+GET /api/v1/analytics/readiness?sourceId=sentinel-2-l2a&aoiId=bangalore_60km_geodesic_aoi
+```
+
+Rules:
+
+- The endpoint is authenticated like the other `/api/v1` routes and returns the `APIResponse`
+  envelope.
+- Readiness is read-only: it only inspects registered `provider_scenes`, `raster_outputs`, and
+  completed `sentinel2_backfill` jobs. It must not search providers, mirror source assets, process
+  rasters, or call TiTiler.
+- Staleness is calculated from the newest NDVI output timestamp or an output-producing successful
+  `full_pipeline` preload job:
+  `freshness_reference_at + AKASHA_SENTINEL2_PRELOAD_FRESHNESS_MAX_AGE_HOURS`. If the current UTC
+  time is after that instant, status is `STALE` with reason code `PRELOAD_STALE`.
+- `metadata_only`, `mirror_only`, partial, and no-output jobs never refresh readiness freshness.
+- Deterministic reason codes are `SOURCE_MISMATCH`, `AOI_MISMATCH`,
+  `NO_SUCCESSFUL_PRELOAD_JOB`, `NO_PRELOAD_OUTPUTS`, `MISSING_INDEX_COVERAGE`, and
+  `PRELOAD_STALE`.
+
+Default preload policy:
+
+| Setting | Default |
+| --- | --- |
+| Source | `sentinel-2-l2a` |
+| Provider route | `earthsearch:sentinel-2-l2a` |
+| AOI | `bangalore_60km_geodesic_aoi` |
+| Mode | `full_pipeline` |
+| Rolling search window | 180 days |
+| Refresh cadence | weekly, Monday 02:30 UTC |
+| Freshness threshold | 168 hours |
+| Backfill search item cap | 1000, never a one-item smoke cap |
+
+Operators can override the `AKASHA_SENTINEL2_PRELOAD_*` settings, but production readiness for the
+app requires the weekly full-pipeline preload to create NDVI derived outputs for the Bangalore AOI.
+
 ## 21. Landsat and Sentinel-1 boundaries
 
 ### 21.1 Landsat fallback

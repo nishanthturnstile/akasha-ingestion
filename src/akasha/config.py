@@ -3,6 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -60,6 +61,9 @@ class Settings(BaseSettings):
     earthsearch_timeout_seconds: float = Field(default=30.0, gt=0)
     earthsearch_page_size: int = Field(default=100, gt=0, le=1000)
 
+    titiler_internal_url: str = "http://titiler:8000"
+    titiler_timeout_seconds: float = Field(default=30.0, gt=0)
+
     source_mirror_mode: SourceMirrorMode = SourceMirrorMode.AOI_CLIPPED
     source_mirror_max_bytes_per_run: int | None = Field(default=None, gt=0)
     source_mirror_required_headroom_bytes: int = Field(default=0, ge=0)
@@ -84,6 +88,19 @@ class Settings(BaseSettings):
 
     sentinel2_profile_version: str = "sentinel2-l2a-earthsearch-v1"
     selection_policy_version: str = "field-selection-v1"
+    sentinel2_preload_source_id: str = "sentinel-2-l2a"
+    sentinel2_preload_aoi_id: str = "bangalore_60km_geodesic_aoi"
+    sentinel2_preload_provider_route: str = "earthsearch:sentinel-2-l2a"
+    sentinel2_preload_mode: Literal["metadata_only", "mirror_only", "full_pipeline"] = (
+        "full_pipeline"
+    )
+    sentinel2_preload_date_window_days: int = Field(default=180, gt=0)
+    sentinel2_preload_refresh_days: int = Field(default=7, gt=0)
+    sentinel2_preload_freshness_max_age_hours: int = Field(default=168, gt=0)
+    sentinel2_preload_schedule_enabled: bool = True
+    sentinel2_preload_schedule_day_of_week: str = "mon"
+    sentinel2_preload_schedule_hour_utc: int = Field(default=2, ge=0, le=23)
+    sentinel2_preload_schedule_minute_utc: int = Field(default=30, ge=0, le=59)
     live_provider_tests: bool = False
 
     @field_validator("log_level")

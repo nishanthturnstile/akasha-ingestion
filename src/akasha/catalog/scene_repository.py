@@ -51,6 +51,15 @@ class InMemorySceneRepository:
     def get(self, scene_id: str) -> ProviderSceneRecord | None:
         return next((scene for scene in self._scenes.values() if scene.id == scene_id), None)
 
+    def list_for_source_aoi(self, *, source_id: str, aoi_id: str) -> list[ProviderSceneRecord]:
+        scenes = [
+            scene
+            for scene in self._scenes.values()
+            if scene.source_id == source_id and scene.aoi_id == aoi_id
+        ]
+        scenes.sort(key=lambda scene: scene.acquisition_at or datetime.min.replace(tzinfo=UTC))
+        return scenes
+
     def list_candidates(
         self,
         *,
@@ -174,6 +183,22 @@ class DatabaseSceneRepository:
                 {"scene_id": scene_id},
             ).mappings().first()
         return _row_to_scene(row) if row else None
+
+    def list_for_source_aoi(self, *, source_id: str, aoi_id: str) -> list[ProviderSceneRecord]:
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT *, ST_AsGeoJSON(scene_geometry)::json AS scene_geometry_geojson
+                    FROM akasha.provider_scenes
+                    WHERE source_id = :source_id
+                      AND aoi_id = :aoi_id
+                    ORDER BY acquisition_at ASC NULLS LAST, created_at ASC
+                    """
+                ),
+                {"source_id": source_id, "aoi_id": aoi_id},
+            ).mappings().all()
+        return [_row_to_scene(row) for row in rows]
 
     def list_candidates(
         self,

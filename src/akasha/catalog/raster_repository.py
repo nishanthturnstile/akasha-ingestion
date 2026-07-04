@@ -62,6 +62,30 @@ class InMemoryRasterRepository:
             None,
         )
 
+    def get(self, output_id: str) -> RasterOutputRecord | None:
+        return next(
+            (output for output in self._outputs.values() if output.id == output_id),
+            None,
+        )
+
+    def list_for_scene_ids(
+        self,
+        scene_ids: list[str],
+        *,
+        index_name: str | None = None,
+    ) -> list[RasterOutputRecord]:
+        scene_id_set = set(scene_ids)
+        normalized = index_name.lower() if index_name is not None else None
+        outputs = [
+            output
+            for output in self._outputs.values()
+            if output.scene_id in scene_id_set
+            and output.output_kind == "derived_index"
+            and (normalized is None or output.index_name == normalized)
+        ]
+        outputs.sort(key=lambda output: output.created_at or datetime.min.replace(tzinfo=UTC))
+        return outputs
+
 
 class DatabaseRasterRepository:
     def __init__(self, engine: Engine) -> None:
@@ -167,6 +191,50 @@ class DatabaseRasterRepository:
                 {"scene_id": scene_id, "index_name": index_name.lower()},
             ).mappings().first()
         return _row_to_raster(row) if row else None
+
+    def get(self, output_id: str) -> RasterOutputRecord | None:
+        with self._engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM akasha.raster_outputs
+                    WHERE id = CAST(:output_id AS uuid)
+                    """
+                ),
+                {"output_id": output_id},
+            ).mappings().first()
+        return _row_to_raster(row) if row else None
+
+    def list_for_scene_ids(
+        self,
+        scene_ids: list[str],
+        *,
+        index_name: str | None = None,
+    ) -> list[RasterOutputRecord]:
+        if not scene_ids:
+            return []
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM akasha.raster_outputs
+                    WHERE scene_id = ANY(CAST(:scene_ids AS uuid[]))
+                      AND output_kind = 'derived_index'
+                      AND (
+                          CAST(:index_name AS text) IS NULL
+                          OR index_name = CAST(:index_name AS text)
+                      )
+                    ORDER BY created_at ASC
+                    """
+                ),
+                {
+                    "scene_ids": scene_ids,
+                    "index_name": index_name.lower() if index_name is not None else None,
+                },
+            ).mappings().all()
+        return [_row_to_raster(row) for row in rows]
 
 
 def _derived_key(output: RasterOutputRecord) -> tuple[str, str, str, str, str, float]:

@@ -1,0 +1,9 @@
+{
+  "success": true,
+  "data": {
+    "status": "AVAILABLE",
+    "sourceId": "sentinel-2-l2a",
+    "aoiId": "bangalore_60km_geodesic_aoi"
+  },
+  "error": null
+}

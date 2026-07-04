@@ -118,6 +118,14 @@ class AnalyticsService:
                 path_template=stats_template,
                 geometry_or_query_hash=self._signing.query_hash(f"{query_id}:stats"),
             )
+            overlay_template = f"/api/v1/analytics/field-index/{query_id}/overlay.png"
+            overlay_ref = self._signing.sign(
+                method="GET",
+                operation="overlay",
+                resource_id=query_id,
+                path_template=overlay_template,
+                geometry_or_query_hash=self._signing.query_hash(f"{query_id}:overlay"),
+            )
             record = self._field_query_repository.save(
                 FieldQueryRecord(
                     query_id=query_id,
@@ -157,6 +165,10 @@ class AnalyticsService:
                 layerId=layer.layer_id or "",
                 tileUrl=f"{self._settings.public_base_url}{tile_template}?{tile_ref.query_string()}",
                 statsUrl=f"{self._settings.public_base_url}{stats_template}?{stats_ref.query_string()}",
+                overlayUrl=(
+                    f"{self._settings.public_base_url}{overlay_template}"
+                    f"?{overlay_ref.query_string()}"
+                ),
                 selection=FieldIndexSelection(
                     windowDays=7,
                     rule="quality_first",
@@ -206,6 +218,34 @@ class AnalyticsService:
             "classStatistics": record.class_area_json,
             "quality": record.quality_json,
         }
+
+    def overlay_for_query(self, query_id: str) -> tuple[bytes, list[list[float]] | None] | None:
+        """Render a field-clipped index overlay PNG for a stored query.
+
+        Returns ``(png_bytes, corners)`` or ``None`` when the query, its raster
+        output, or object storage is unavailable. Corners are ``[lng, lat]``
+        pairs for a MapLibre ``image`` source; ``None`` when the polygon has no
+        valid pixels (a transparent PNG is still returned).
+        """
+
+        from akasha.processing.overlay import render_clipped_index_overlay
+
+        record = self._field_query_repository.get(query_id)
+        if record is None or not record.raster_output_id:
+            return None
+        if self._raster_repository is None or self._object_store is None:
+            return None
+        raster = self._raster_repository.get(record.raster_output_id)
+        if raster is None:
+            return None
+        payload = self._object_store.get_required(raster.object_path)
+        return render_clipped_index_overlay(
+            payload,
+            geometry=record.field_geometry,
+            index_name=record.index_name,
+            scale_factor=raster.scale_factor,
+            nodata=raster.nodata_value,
+        )
 
     def _unavailable(
         self,

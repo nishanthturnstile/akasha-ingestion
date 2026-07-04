@@ -29,6 +29,7 @@ from akasha.security import hash_api_key
 from akasha.services.analytics import AnalyticsService
 from akasha.services.sentinel2_ingestion import Sentinel2IngestionService
 from akasha.services.source_mirroring import SourceMirroringService
+from akasha.services.titiler_tiles import TiTilerTileService
 from akasha.storage.object_store import InMemoryObjectStore
 
 
@@ -46,7 +47,10 @@ def test_offline_sentinel2_vertical_slice_returns_available_and_signed_urls(tmp_
     scene_repository = InMemorySceneRepository()
     asset_repository = InMemorySceneAssetRepository()
     raster_repository = InMemoryRasterRepository()
-    tile_layer_repository = InMemoryTileLayerRepository()
+    tile_layer_repository = InMemoryTileLayerRepository(
+        raster_repository=raster_repository,
+        scene_repository=scene_repository,
+    )
     field_query_repository = InMemoryFieldQueryRepository()
     visualization_profiles, threshold_profiles = build_memory_profiles(
         VISUALIZATION_PROFILES,
@@ -111,6 +115,7 @@ def test_offline_sentinel2_vertical_slice_returns_available_and_signed_urls(tmp_
     app = create_app(settings, object_store=object_store)
     app.state.analytics_service = analytics
     app.state.tile_layer_repository = tile_layer_repository
+    app.state.titiler_tile_service = _mock_titiler_service(settings)
     client = TestClient(app)
 
     response = client.post(
@@ -145,6 +150,18 @@ def test_offline_sentinel2_vertical_slice_returns_available_and_signed_urls(tmp_
     tile_response = client.get(f"{tile_url.path}?{tile_url.query}")
     assert tile_response.status_code == 200
     assert tile_response.headers["content-type"] == "image/png"
+    assert tile_response.content == _MOCK_PNG
+    assert "titiler" not in str(tile_response.content)
+
+    # Field-clipped NDVI overlay: signed, app-domain, returns a real PNG (never the
+    # full-scene tiles). No internal storage/host paths leak in the URL or bytes.
+    assert body["data"]["overlayUrl"]
+    overlay_url = urlparse(body["data"]["overlayUrl"])
+    assert overlay_url.path.endswith("/overlay.png")
+    overlay_response = client.get(f"{overlay_url.path}?{overlay_url.query}")
+    assert overlay_response.status_code == 200
+    assert overlay_response.headers["content-type"] == "image/png"
+    assert overlay_response.content[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 def test_sentinel2_mirror_assets_reuses_existing_mirrors(tmp_path) -> None:
@@ -204,6 +221,20 @@ class _PgstacRepository:
 class _FailingMirrorService:
     def mirror_asset(self, **_: object) -> object:
         raise AssertionError("already mirrored assets should not be downloaded again")
+
+
+_MOCK_PNG = b"\x89PNG\r\n\x1a\n" + b"mock-tile-bytes" * 8
+
+
+def _mock_titiler_service(settings) -> TiTilerTileService:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "WebMercatorQuad" in request.url.path
+        return httpx.Response(200, content=_MOCK_PNG, headers={"content-type": "image/png"})
+
+    return TiTilerTileService(
+        settings=settings,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
 
 
 def _item() -> NormalizedStacItem:

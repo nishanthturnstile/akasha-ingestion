@@ -1,0 +1,8 @@
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "401",
+    "message": "Invalid API key"
+  }
+}

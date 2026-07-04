@@ -5,6 +5,28 @@ Currently **Phase 1: core platform foundation** (FastAPI + Celery + Postgres/Pos
 See [README.md](README.md) and [docs/akasha-ingestion-plan.md](docs/akasha-ingestion-plan.md) for the
 what/why, and [docs/architecture-technical-stack.md](docs/architecture-technical-stack.md) for the full stack.
 
+## Multi-root workspace context
+
+This repository is commonly opened in the saved VS Code workspace
+[`../akasha-workspace.code-workspace`](../akasha-workspace.code-workspace) alongside
+[`../akasha-em-git`](../akasha-em-git), the Akasha Ghat EM farm-management application.
+
+When an agent is asked to compare, reuse, or align patterns across Akasha projects:
+
+- First read this file and [`../akasha-em-git/AGENTS.md`](../akasha-em-git/AGENTS.md); each repo
+  has different ownership boundaries and runtime assumptions.
+- Treat this repo as the **standalone ingestion/catalog/processing backend** reference: FastAPI,
+  Celery, Postgres/PostGIS/pgSTAC, MinIO, provider adapters, object storage, processing, jobs, and
+  operational runbooks.
+- Treat `../akasha-em-git` as the **application/product** reference: BFF + frontend + farm-management
+  workflows, UI patterns, field/season/operation concepts, and ResourceSat product integration.
+- Do not copy code blindly between roots. Prefer copying concepts and adapting them to this repo's
+  conventions: `AKASHA_` settings, `APIResponse[T]`, manual app-state dependency wiring,
+  duck-typed paired implementations, raw SQL runtime queries, and in-memory/external backend parity.
+- Keep edits scoped to the requested root unless the user explicitly asks for a cross-repository
+  change. If touching both roots, validate each root with its own commands and mention both in the
+  final summary.
+
 ## Build, test, lint
 
 Python 3.11+. Editable install with dev extras; a `.venv` at the repo root is expected.

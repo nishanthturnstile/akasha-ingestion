@@ -179,6 +179,7 @@ class FieldIndexAvailableResponse(BaseModel):
     layerId: str
     tileUrl: str
     statsUrl: str
+    overlayUrl: str | None = None
     selection: FieldIndexSelection
     statistics: FieldIndexStatistics
     classStatistics: list[dict[str, Any]] = Field(default_factory=list)
@@ -188,3 +189,38 @@ class FieldIndexAvailableResponse(BaseModel):
 
 
 FieldIndexResponse = FieldIndexAvailableResponse | FieldIndexUnavailableResponse
+
+
+class ReadinessUnavailableReason(BaseModel):
+    code: str
+    message: str
+
+
+class ReadinessIndexCoverage(BaseModel):
+    available: bool
+    dateCount: int
+    coveragePercent: float
+
+
+class ReadinessLastSuccessfulJob(BaseModel):
+    jobId: str
+    status: Literal["SUCCEEDED"] = "SUCCEEDED"
+    completedAt: str
+
+
+class AnalyticsReadinessResponse(BaseModel):
+    status: Literal["AVAILABLE", "STALE", "UNAVAILABLE"]
+    sourceId: str
+    aoiId: str
+    providerRoute: str
+    latestProcessedSceneDate: date | None
+    latestSuccessfulJobCompletedAt: str | None
+    lastSuccessfulJobAt: str | None
+    staleAfter: str | None
+    freshnessMaxAgeHours: int
+    availableDates: list[date]
+    indexCoverage: dict[str, ReadinessIndexCoverage]
+    lastSuccessfulJob: ReadinessLastSuccessfulJob | None
+    unavailableReasons: list[ReadinessUnavailableReason] = Field(default_factory=list)
+    reasonCode: str | None = None
+    reason: str | None = None

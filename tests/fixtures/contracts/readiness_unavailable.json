@@ -1,0 +1,36 @@
+{
+  "success": true,
+  "data": {
+    "status": "UNAVAILABLE",
+    "sourceId": "sentinel-2-l2a",
+    "aoiId": "bangalore_60km_geodesic_aoi",
+    "providerRoute": "earthsearch:sentinel-2-l2a",
+    "latestProcessedSceneDate": null,
+    "latestSuccessfulJobCompletedAt": "2026-01-14T02:30:00Z",
+    "lastSuccessfulJobAt": "2026-01-14T02:30:00Z",
+    "staleAfter": "2026-01-21T02:30:00Z",
+    "freshnessMaxAgeHours": 168,
+    "availableDates": [],
+    "indexCoverage": {
+      "NDVI": {
+        "available": false,
+        "dateCount": 0,
+        "coveragePercent": 0.0
+      }
+    },
+    "lastSuccessfulJob": {
+      "jobId": "job_01MISSINDEX",
+      "status": "SUCCEEDED",
+      "completedAt": "2026-01-14T02:30:00Z"
+    },
+    "unavailableReasons": [
+      {
+        "code": "MISSING_INDEX_COVERAGE",
+        "message": "Precomputed outputs exist, but NDVI coverage is missing."
+      }
+    ],
+    "reasonCode": "MISSING_INDEX_COVERAGE",
+    "reason": "Precomputed outputs exist, but NDVI coverage is missing."
+  },
+  "error": null
+}

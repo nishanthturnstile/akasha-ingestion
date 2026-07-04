@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -7,8 +8,11 @@ import numpy as np
 import rasterio
 from numpy.typing import NDArray
 from pyproj import CRS, Transformer
+from rasterio.errors import WindowError
 from rasterio.features import geometry_mask
 from rasterio.io import MemoryFile
+from rasterio.windows import Window, intersection
+from rasterio.windows import from_bounds as window_from_bounds
 from shapely.geometry import shape
 from shapely.ops import transform as shapely_transform
 
@@ -40,12 +44,24 @@ def raster_stats(
     threshold_classes: list[dict[str, Any]],
 ) -> tuple[dict[str, float | int | None], list[dict[str, Any]]]:
     with MemoryFile(payload) as memory_file, memory_file.open() as dataset:
-        values = dataset.read(1)
         dataset_geometry = _geometry_for_dataset(dataset, geometry)
+        # Read only the window covering the field polygon. Stats consider in-polygon
+        # pixels only, so a windowed read is identical to a full read but far cheaper
+        # for large scene COGs.
+        window = _polygon_window(dataset, dataset_geometry)
+        if window is None:
+            empty = _stats(
+                np.array([], dtype="float32"),
+                valid_pixel_count=0,
+                field_pixel_count=0,
+            )
+            return empty, []
+        values = dataset.read(1, window=window)
+        window_transform = dataset.window_transform(window)
         field_mask = geometry_mask(
             [dataset_geometry],
             out_shape=values.shape,
-            transform=dataset.transform,
+            transform=window_transform,
             invert=True,
         )
         valid = field_mask & np.isfinite(values)
@@ -65,6 +81,32 @@ def raster_stats(
             pixel_area_sq_m=_pixel_area_sq_m(dataset, geometry),
         )
         return stats, class_stats
+
+
+def _polygon_window(dataset: rasterio.io.DatasetReader, dataset_geometry: dict[str, Any]):
+    """Return the pixel window fully covering the polygon, clamped to the dataset.
+
+    The window is expanded to whole pixels (floor near edge, ceil far edge) with a
+    one-pixel pad so no polygon-boundary pixel is clipped: the in-polygon pixel set
+    (and therefore the statistics) is identical to a full-band read. Returns ``None``
+    when the polygon does not overlap the dataset.
+    """
+
+    minx, miny, maxx, maxy = shape(dataset_geometry).bounds
+    window = window_from_bounds(minx, miny, maxx, maxy, transform=dataset.transform)
+    col_off = math.floor(window.col_off) - 1
+    row_off = math.floor(window.row_off) - 1
+    width = math.ceil(window.col_off + window.width) - math.floor(window.col_off) + 2
+    height = math.ceil(window.row_off + window.height) - math.floor(window.row_off) + 2
+    padded = Window(col_off, row_off, width, height)
+    ds_window = Window(0, 0, dataset.width, dataset.height)
+    try:
+        clamped = intersection(padded, ds_window)
+    except WindowError:
+        return None
+    if clamped.width <= 0 or clamped.height <= 0:
+        return None
+    return clamped
 
 
 def _stats(

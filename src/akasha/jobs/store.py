@@ -31,6 +31,7 @@ class Job:
     error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
 
 
 class InMemoryJobStore:
@@ -106,7 +107,8 @@ class InMemoryJobStore:
             job.object_path = object_path
             job.checksum_sha256 = checksum_sha256
             job.result_metadata = result_metadata or {}
-            job.updated_at = datetime.now(UTC)
+            job.completed_at = datetime.now(UTC)
+            job.updated_at = job.completed_at
             return job
 
     def mark_failed(self, job: Job, *, error: str) -> Job:

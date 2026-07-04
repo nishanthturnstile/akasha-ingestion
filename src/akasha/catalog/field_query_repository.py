@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
-from json import dumps
+from json import dumps, loads
 from typing import Any
 from uuid import uuid4
 
@@ -104,14 +104,19 @@ class DatabaseFieldQueryRepository:
     def get(self, query_id: str) -> FieldQueryRecord | None:
         with self._engine.connect() as connection:
             row = connection.execute(
-                text("SELECT * FROM akasha.field_queries WHERE query_id = :query_id"),
+                text(
+                    "SELECT *, ST_AsGeoJSON(field_geometry) AS field_geometry_geojson "
+                    "FROM akasha.field_queries WHERE query_id = :query_id"
+                ),
                 {"query_id": query_id},
             ).mappings().first()
         if row is None:
             return None
+        geometry_geojson = row.field_geometry_geojson
+        field_geometry = loads(geometry_geojson) if geometry_geojson else {}
         return FieldQueryRecord(
             query_id=row.query_id,
-            field_geometry={},
+            field_geometry=field_geometry,
             index_name=row.index_name,
             requested_date=row.requested_date,
             selection_reason=row.selection_reason,

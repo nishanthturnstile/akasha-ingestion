@@ -39,6 +39,7 @@ from akasha.db.session import create_db_engine
 from akasha.jobs.sql_store import PostgresJobStore
 from akasha.jobs.stage_store import InMemoryStageStore, PostgresStageStore
 from akasha.jobs.store import InMemoryJobStore
+from akasha.services.titiler_tiles import TiTilerTileService
 from akasha.storage.object_store import InMemoryObjectStore, MinIOObjectStore
 
 
@@ -163,10 +164,20 @@ def create_pgstac_repository(
 def create_tile_layer_repository(
     settings: Settings,
     engine: Engine | None = None,
+    *,
+    raster_repository: object | None = None,
+    scene_repository: object | None = None,
 ) -> InMemoryTileLayerRepository | DatabaseTileLayerRepository:
     if settings.runtime_backend == RuntimeBackend.MEMORY:
-        return InMemoryTileLayerRepository()
+        return InMemoryTileLayerRepository(
+            raster_repository=raster_repository,
+            scene_repository=scene_repository,
+        )
     return DatabaseTileLayerRepository(engine or create_db_engine(settings))
+
+
+def create_titiler_tile_service(settings: Settings) -> TiTilerTileService:
+    return TiTilerTileService(settings=settings)
 
 
 def create_field_query_repository(
