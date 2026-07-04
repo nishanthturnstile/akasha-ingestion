@@ -241,9 +241,9 @@ jobs:
           python3 -c 'import json, sys; data=json.load(open("docker-compose.rendered.json", encoding="utf-8")); runtime={"api","migrate","seed","scheduler","worker-search","worker-download","worker-process","worker-heavy"}; offenders=[name for name, svc in data.get("services", {}).items() if name in runtime and svc.get("build")]; print("Runtime services still have build entries: "+", ".join(offenders)) if offenders else None; sys.exit(1 if offenders else 0)'
           ${COMPOSE} pull api migrate seed scheduler worker-search worker-download worker-process worker-heavy caddy postgres redis minio titiler
           ${COMPOSE} stop api scheduler worker-search worker-download worker-process worker-heavy || true
-          ${COMPOSE} run -T --rm pgstac-migrate
-          ${COMPOSE} run -T --rm migrate
-          ${COMPOSE} run -T --rm seed
+          ${COMPOSE} run --interactive=false -T --rm pgstac-migrate
+          ${COMPOSE} run --interactive=false -T --rm migrate
+          ${COMPOSE} run --interactive=false -T --rm seed
           ${COMPOSE} up -d api scheduler worker-search worker-download worker-process worker-heavy postgres redis minio titiler caddy
           ${COMPOSE} ps
           REMOTE
