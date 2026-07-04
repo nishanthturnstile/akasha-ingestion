@@ -1,0 +1,272 @@
+name: Deploy staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: Existing immutable image SHA to deploy or roll back to. Leave blank to build this commit.
+        required: false
+        type: string
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ vars.GHCR_IMAGE_NAMESPACE || 'akasha-techcatalyst' }}
+  CLIENT_REPOSITORY: Akasha-TechCatalyst/akasha-ingestion
+  PROJECT_NAME: akasha-ingestion
+  DEPLOY_BASE_DIR: ${{ vars.AKASHA_STAGING_DEPLOY_DIR || '/srv/akasha/ingestion-deploy' }}
+  # Opt JavaScript actions into Node.js 24 ahead of the June 2026 runner default.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build-images:
+    name: Build and push ${{ matrix.image }}
+    if: github.repository == 'Akasha-TechCatalyst/akasha-ingestion' && (github.event_name != 'workflow_dispatch' || inputs.image_sha == '')
+    runs-on: [self-hosted, linux, x64, akasha-control]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: akasha-ingestion-api
+            dockerfile: docker/api.Dockerfile
+          - image: akasha-ingestion-worker
+            dockerfile: docker/worker.Dockerfile
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:main
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=${{ matrix.image }}
+
+  deploy-staging:
+    name: Deploy or roll back akasha-staging
+    if: always() && github.repository == 'Akasha-TechCatalyst/akasha-ingestion' && (needs.build-images.result == 'success' || needs.build-images.result == 'skipped')
+    needs: build-images
+    runs-on: [self-hosted, linux, x64, akasha-control]
+    env:
+      IMAGE_TAG: ${{ inputs.image_sha || github.sha }}
+      AKASHA_STAGING_HOST: ${{ vars.AKASHA_STAGING_HOST || secrets.AKASHA_STAGING_HOST }}
+      AKASHA_STAGING_USER: ${{ vars.AKASHA_STAGING_USER || 'akasha' }}
+      AKASHA_STAGING_SSH_PORT: ${{ vars.AKASHA_STAGING_SSH_PORT || '22' }}
+      AKASHA_STAGING_SSH_PRIVATE_KEY: ${{ secrets.AKASHA_STAGING_SSH_PRIVATE_KEY }}
+      AKASHA_STAGING_KNOWN_HOSTS: ${{ secrets.AKASHA_STAGING_KNOWN_HOSTS }}
+      AKASHA_STAGING_ENV_FILE: ${{ secrets.AKASHA_STAGING_ENV_FILE }}
+      AKASHA_STAGING_DATA_ROOT: ${{ vars.AKASHA_STAGING_DATA_ROOT || '/srv/akasha/ingestion-platform' }}
+      AKASHA_STAGING_CADDY_BIND: ${{ vars.AKASHA_STAGING_CADDY_BIND || '127.0.0.1:80' }}
+      AKASHA_STAGING_LOCAL_HEALTH_URL: ${{ vars.AKASHA_STAGING_LOCAL_HEALTH_URL }}
+      AKASHA_STAGING_HEALTH_URL: ${{ vars.AKASHA_STAGING_HEALTH_URL }}
+      GHCR_USERNAME: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR for image verification and pull
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate deployment configuration
+        run: |
+          set -euo pipefail
+          test -n "$AKASHA_STAGING_HOST" || { echo "AKASHA_STAGING_HOST repository variable or secret is required."; exit 1; }
+          test -n "$AKASHA_STAGING_USER" || { echo "AKASHA_STAGING_USER is required."; exit 1; }
+          test -n "$AKASHA_STAGING_SSH_PRIVATE_KEY" || { echo "AKASHA_STAGING_SSH_PRIVATE_KEY secret is required."; exit 1; }
+          test -n "$AKASHA_STAGING_ENV_FILE" || { echo "AKASHA_STAGING_ENV_FILE secret is required."; exit 1; }
+          test -n "$GHCR_TOKEN" || { echo "GITHUB_TOKEN for GHCR pull is required."; exit 1; }
+          test -n "$AKASHA_STAGING_DATA_ROOT" || { echo "AKASHA_STAGING_DATA_ROOT is required."; exit 1; }
+          test -n "$AKASHA_STAGING_CADDY_BIND" || { echo "AKASHA_STAGING_CADDY_BIND is required."; exit 1; }
+          if ! printf '%s' "$IMAGE_TAG" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "IMAGE_TAG must be a full 40-character Git SHA."
+            exit 1
+          fi
+          case "$AKASHA_STAGING_DATA_ROOT" in
+            /srv/akasha|/srv/akasha/*) ;;
+            *) echo "AKASHA_STAGING_DATA_ROOT must stay under /srv/akasha on akasha-staging."; exit 1 ;;
+          esac
+          case "$AKASHA_STAGING_CADDY_BIND" in
+            127.0.0.1:*|10.*:*|172.16.*:*|172.17.*:*|172.18.*:*|172.19.*:*|172.2[0-9].*:*|172.3[0-1].*:*|192.168.*:*) ;;
+            *) echo "AKASHA_STAGING_CADDY_BIND must include a loopback or private bind address, for example 10.10.2.4:80."; exit 1 ;;
+          esac
+
+      - name: Verify immutable image tags exist
+        run: |
+          set -euo pipefail
+          for image in akasha-ingestion-api akasha-ingestion-worker; do
+            ref="${REGISTRY}/${IMAGE_NAMESPACE}/${image}:${IMAGE_TAG}"
+            echo "Checking ${ref}"
+            docker manifest inspect "${ref}" >/dev/null
+          done
+
+      - name: Configure SSH for akasha-staging
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$AKASHA_STAGING_SSH_PRIVATE_KEY" > ~/.ssh/akasha_staging_deploy
+          chmod 600 ~/.ssh/akasha_staging_deploy
+          if [ -n "$AKASHA_STAGING_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$AKASHA_STAGING_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "$AKASHA_STAGING_SSH_PORT" -H "$AKASHA_STAGING_HOST" >> ~/.ssh/known_hosts
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Create Compose render script
+        run: |
+          set -euo pipefail
+          mkdir -p .deploy-render
+          cat > .deploy-render/render_compose.py <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          output_path = Path(sys.argv[1])
+          data = json.load(sys.stdin)
+          registry = os.environ["REGISTRY"]
+          namespace = os.environ["IMAGE_NAMESPACE"]
+          tag = os.environ["IMAGE_TAG"]
+          images = {
+              "api": f"{registry}/{namespace}/akasha-ingestion-api:{tag}",
+              "migrate": f"{registry}/{namespace}/akasha-ingestion-api:{tag}",
+              "seed": f"{registry}/{namespace}/akasha-ingestion-api:{tag}",
+              "scheduler": f"{registry}/{namespace}/akasha-ingestion-worker:{tag}",
+              "worker-search": f"{registry}/{namespace}/akasha-ingestion-worker:{tag}",
+              "worker-download": f"{registry}/{namespace}/akasha-ingestion-worker:{tag}",
+              "worker-process": f"{registry}/{namespace}/akasha-ingestion-worker:{tag}",
+              "worker-heavy": f"{registry}/{namespace}/akasha-ingestion-worker:{tag}",
+          }
+          services = data.setdefault("services", {})
+          missing = sorted(set(images) - set(services))
+          if missing:
+              raise SystemExit(f"Missing services in Compose config: {', '.join(missing)}")
+          for service_name, image in images.items():
+              service = services[service_name]
+              service.pop("build", None)
+              service["image"] = image
+          output_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Validate rendered Compose has no runtime builds
+        run: |
+          set -euo pipefail
+          docker compose \
+            --profile tools \
+            -f deploy/docker-compose.yml \
+            -f deploy/compose.prod.yml \
+            -f deploy/compose.staging.yml \
+            config --quiet
+          docker compose \
+            --profile tools \
+            -f deploy/docker-compose.yml \
+            -f deploy/compose.prod.yml \
+            -f deploy/compose.staging.yml \
+            config --format json | python3 .deploy-render/render_compose.py .deploy-render/docker-compose.rendered.json
+          docker compose -f .deploy-render/docker-compose.rendered.json config --quiet
+          python3 -c 'import json, sys; data=json.load(open(".deploy-render/docker-compose.rendered.json", encoding="utf-8")); runtime={"api","migrate","seed","scheduler","worker-search","worker-download","worker-process","worker-heavy"}; offenders=[name for name, svc in data.get("services", {}).items() if name in runtime and svc.get("build")]; print("Runtime services still have build entries: "+", ".join(offenders)) if offenders else None; sys.exit(1 if offenders else 0)'
+
+      - name: Upload Compose and env bundle to akasha-staging
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i ~/.ssh/akasha_staging_deploy -p ${AKASHA_STAGING_SSH_PORT} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          SCP_OPTS="-i ~/.ssh/akasha_staging_deploy -P ${AKASHA_STAGING_SSH_PORT} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          ssh ${SSH_OPTS} "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}" "mkdir -p '${DEPLOY_BASE_DIR}/deploy'"
+          tar -C deploy -czf - . | ssh ${SSH_OPTS} "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}" "tar -xzf - -C '${DEPLOY_BASE_DIR}/deploy'"
+          scp ${SCP_OPTS} .deploy-render/render_compose.py "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}:${DEPLOY_BASE_DIR}/deploy/render_compose.py"
+          printf '%s\n' "$AKASHA_STAGING_ENV_FILE" | ssh ${SSH_OPTS} "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}" "umask 077; cat > '${DEPLOY_BASE_DIR}/deploy/.env'"
+          CADDY_BIND_HOST="${AKASHA_STAGING_CADDY_BIND%:*}"
+          CADDY_BIND_PORT="${AKASHA_STAGING_CADDY_BIND##*:}"
+          AKASHA_API_IMAGE="${REGISTRY}/${IMAGE_NAMESPACE}/akasha-ingestion-api:${IMAGE_TAG}"
+          AKASHA_WORKER_IMAGE="${REGISTRY}/${IMAGE_NAMESPACE}/akasha-ingestion-worker:${IMAGE_TAG}"
+          ssh ${SSH_OPTS} "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}" \
+            "umask 077; { printf '\nAKASHA_ENVIRONMENT=staging\n'; printf 'AKASHA_RUNTIME_BACKEND=external\n'; printf 'AKASHA_API_IMAGE=%s\n' '${AKASHA_API_IMAGE}'; printf 'AKASHA_WORKER_IMAGE=%s\n' '${AKASHA_WORKER_IMAGE}'; printf 'AKASHA_DATA_ROOT=%s\n' '${AKASHA_STAGING_DATA_ROOT}'; printf 'AKASHA_HTTP_BIND=%s\n' '${CADDY_BIND_HOST}'; printf 'AKASHA_HTTP_PORT=%s\n' '${CADDY_BIND_PORT}'; } >> '${DEPLOY_BASE_DIR}/deploy/.env'"
+      - name: Log in to GHCR on akasha-staging
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i ~/.ssh/akasha_staging_deploy -p ${AKASHA_STAGING_SSH_PORT} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          printf '%s\n' "$GHCR_TOKEN" | ssh ${SSH_OPTS} "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}" \
+            "docker login '${REGISTRY}' -u '${GHCR_USERNAME}' --password-stdin >/dev/null"
+
+      - name: Deploy immutable stack on akasha-staging
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i ~/.ssh/akasha_staging_deploy -p ${AKASHA_STAGING_SSH_PORT} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          ssh ${SSH_OPTS} "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}" \
+            "DEPLOY_BASE_DIR='${DEPLOY_BASE_DIR}' PROJECT_NAME='${PROJECT_NAME}' REGISTRY='${REGISTRY}' IMAGE_NAMESPACE='${IMAGE_NAMESPACE}' IMAGE_TAG='${IMAGE_TAG}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "${DEPLOY_BASE_DIR}/deploy"
+          BASE_COMPOSE="docker compose --project-name ${PROJECT_NAME} --profile tools --env-file .env -f docker-compose.yml -f compose.prod.yml -f compose.staging.yml"
+          ${BASE_COMPOSE} config --quiet
+          ${BASE_COMPOSE} config --format json | python3 render_compose.py docker-compose.rendered.json
+          COMPOSE="docker compose --project-name ${PROJECT_NAME} --profile tools --env-file .env -f docker-compose.rendered.json"
+          ${COMPOSE} config --quiet
+          python3 -c 'import json, sys; data=json.load(open("docker-compose.rendered.json", encoding="utf-8")); runtime={"api","migrate","seed","scheduler","worker-search","worker-download","worker-process","worker-heavy"}; offenders=[name for name, svc in data.get("services", {}).items() if name in runtime and svc.get("build")]; print("Runtime services still have build entries: "+", ".join(offenders)) if offenders else None; sys.exit(1 if offenders else 0)'
+          ${COMPOSE} pull api migrate seed scheduler worker-search worker-download worker-process worker-heavy caddy postgres redis minio titiler
+          ${COMPOSE} stop api scheduler worker-search worker-download worker-process worker-heavy || true
+          ${COMPOSE} run --rm pgstac-migrate
+          ${COMPOSE} run --rm migrate
+          ${COMPOSE} run --rm seed
+          ${COMPOSE} up -d api scheduler worker-search worker-download worker-process worker-heavy postgres redis minio titiler caddy
+          ${COMPOSE} ps
+          REMOTE
+
+      - name: Verify staging health
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i ~/.ssh/akasha_staging_deploy -p ${AKASHA_STAGING_SSH_PORT} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          CADDY_BIND_HOST="${AKASHA_STAGING_CADDY_BIND%:*}"
+          CADDY_BIND_PORT="${AKASHA_STAGING_CADDY_BIND##*:}"
+          LOCAL_HEALTH_URL="${AKASHA_STAGING_LOCAL_HEALTH_URL:-http://${CADDY_BIND_HOST}:${CADDY_BIND_PORT}/health}"
+          ssh ${SSH_OPTS} "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}" \
+            "curl -fsS --retry 12 --retry-delay 5 --max-time 10 '${LOCAL_HEALTH_URL}' >/dev/null"
+          if [ -n "$AKASHA_STAGING_HEALTH_URL" ]; then
+            HEALTH_URL="$AKASHA_STAGING_HEALTH_URL"
+          elif [ "$CADDY_BIND_HOST" = "127.0.0.1" ]; then
+            echo "Skipping runner-side health check for loopback-only Caddy bind."
+            exit 0
+          else
+            HEALTH_URL="http://${CADDY_BIND_HOST}:${CADDY_BIND_PORT}/health"
+          fi
+          curl -fsS --retry 12 --retry-delay 5 --max-time 10 "$HEALTH_URL" >/dev/null
+
+      - name: Rollback instructions
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.image_sha != '' }}
+        run: |
+          echo "Manual rollback completed by deploying immutable image SHA ${IMAGE_TAG}."
+          echo "If rollback involved env or database changes, restore the matching preserved env file and DB backup before rerunning this workflow."

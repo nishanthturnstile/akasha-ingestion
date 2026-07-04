@@ -1,0 +1,81 @@
+name: Sync client main
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CLIENT_REPO: ${{ vars.CLIENT_REPO || 'Akasha-TechCatalyst/akasha-ingestion' }}
+  # Opt JavaScript actions into Node.js 24 ahead of the June 2026 runner default.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: sync-client-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Push source main to client main
+    # Guard prevents the synced workflow copy from running inside the client repository.
+    if: github.repository == 'nishanthturnstile/akasha-ingestion'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Validate required configuration
+        env:
+          CLIENT_REPO_SYNC_SSH_KEY: ${{ secrets.CLIENT_REPO_SYNC_SSH_KEY }}
+        run: |
+          if [ -z "$CLIENT_REPO_SYNC_SSH_KEY" ]; then
+            echo "CLIENT_REPO_SYNC_SSH_KEY is not configured."
+            echo "Add the private deploy key in repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          case "$CLIENT_REPO" in
+            */*) ;;
+            *) echo "CLIENT_REPO must be owner/repo, for example Akasha-TechCatalyst/akasha-ingestion."; exit 1 ;;
+          esac
+
+      - name: Configure SSH for client repository
+        env:
+          CLIENT_REPO_SYNC_SSH_KEY: ${{ secrets.CLIENT_REPO_SYNC_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$CLIENT_REPO_SYNC_SSH_KEY" > ~/.ssh/client_repo_sync_key
+          chmod 600 ~/.ssh/client_repo_sync_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<'EOF'
+          Host github.com
+            HostName github.com
+            User git
+            IdentityFile ~/.ssh/client_repo_sync_key
+            IdentitiesOnly yes
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Push main to client repository
+        run: |
+          git config user.name "akasha-client-sync[bot]"
+          git config user.email "akasha-client-sync[bot]@users.noreply.github.com"
+          git remote add client-sync "git@github.com:${CLIENT_REPO}.git"
+          git push client-sync HEAD:main
+
+      - name: Push version tags to client repository
+        run: |
+          git fetch --tags --force
+          git remote get-url client-sync >/dev/null 2>&1 || git remote add client-sync "git@github.com:${CLIENT_REPO}.git"
+          if git tag --list 'v*' | grep -q .; then
+            git tag --list 'v*' | xargs -r git push client-sync
+          else
+            echo "No v* tags to sync."
+          fi

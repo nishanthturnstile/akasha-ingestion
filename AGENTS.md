@@ -27,6 +27,60 @@ When an agent is asked to compare, reuse, or align patterns across Akasha projec
   change. If touching both roots, validate each root with its own commands and mention both in the
   final summary.
 
+## Current self-hosted deployment topology (provider-whitelisted staging)
+
+As of the UI↔pipeline integration work, Akasha is moving to a **two-VM split**:
+
+- **`akasha-staging`** — this is the provider-whitelisted VM. Bhoonidhi/ISRO provider access is
+  available here, so this standalone ingestion platform must run here (API, workers, Postgres/pgSTAC,
+  MinIO, Redis, TiTiler, scheduler/dispatchers). Current observed size: Azure `Standard_D4s_v4`
+  (4 vCPU, ~16 GiB RAM) with a 256 GiB OS disk and a 512 GiB `/srv/akasha` data disk. This is
+  acceptable for bounded MVP ingestion/backfill/composite jobs, but scale up before concurrent heavy
+  processing or larger AOIs.
+- **`akasha-control`** — Coolify control/public-app VM. The product app (`../akasha-em-git`) should
+  move there and call this ingestion service server-to-server. Current observed size: Azure
+  `Standard_D4s_v4` (4 vCPU, ~16 GiB RAM) with a 64 GiB OS disk and 256 GiB `/data`; acceptable for
+  Coolify + the product app MVP when bulk raster data stays on `akasha-staging`.
+
+Connectivity rules for this split:
+
+- Ingestion remains a private/server-to-server service. The browser must never call this API, MinIO,
+  Postgres, pgSTAC, or TiTiler directly.
+- The product app BFF on `akasha-control` calls this API on `akasha-staging` using `INGESTION_API_URL`
+  and `INGESTION_API_KEY`. Prefer private networking/VNet peering/WireGuard or an IP-allowlisted
+  HTTPS endpoint.
+- `AKASHA_PUBLIC_BASE_URL` in this repo must be set to the exact URL prefix used by the app BFF as
+  `INGESTION_API_URL`. The app BFF allowlists signed ingestion URLs by prefix before proxying stats,
+  tiles, or field-clipped overlays, so the scheme/host/port must match exactly and should not include
+  a trailing slash.
+- Keep all provider downloads, raw rasters, derived COGs, composites, scratch files, and validation
+  data on `/srv/akasha` on `akasha-staging`; never put bulk raster data under `/`, `/tmp`,
+  `/var/tmp`, `/var/lib/docker`, or `/data/coolify`.
+
+## Product-app integration contract
+
+The product app consumes this pipeline through the API envelope only; preserve these contracts when
+changing analytics code:
+
+- `POST /api/v1/analytics/field-index` receives the app field polygon (`geometry`, `crs=EPSG:4326`),
+  selects a precomputed derived index COG, computes field statistics, stores a row in
+  `akasha.field_queries`, and returns `FieldIndexAvailableResponse`/`FieldIndexUnavailableResponse`.
+- For the field analytics map, the app uses the signed `overlayUrl`, not full-scene XYZ tiles. The
+  overlay route `GET /api/v1/analytics/field-index/{query_id}/overlay.png` must render a
+  **field-clipped PNG** from the stored query geometry: transparent outside the polygon, with
+  `X-Akasha-Overlay-Corners` for the MapLibre image source.
+- Signed `statsUrl`/`overlayUrl` values must use `AKASHA_PUBLIC_BASE_URL` as their prefix and must
+  carry valid HMAC query parameters (`op`, `exp`, `kid`, `sig`). These signed routes are the only
+  analytics routes that may be consumed without `X-API-Key`; all unsigned API routes still require
+  the API key header.
+- `tileUrl` and `/tiles/{layer_id}/{z}/{x}/{y}.png` may remain for future/regional display or tests,
+  but they must not be required for the field-clipped NDVI heatmap path.
+- Runtime queries are raw SQL. If a route needs stored geometry, retrieve it explicitly (for example,
+  `ST_AsGeoJSON(field_geometry)`) rather than stubbing geometry to `{}`.
+- Do not add browser-facing contracts that expose this ingestion API, MinIO, Postgres/pgSTAC,
+  TiTiler, object keys, `s3://` URLs, provider hrefs, or signed provider URLs. The product app BFF is
+  the only supported consumer for field analytics in the two-VM topology.
+
 ## Build, test, lint
 
 Python 3.11+. Editable install with dev extras; a `.venv` at the repo root is expected.

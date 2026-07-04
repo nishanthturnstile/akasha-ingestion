@@ -1,0 +1,316 @@
+# Staging override for akasha-staging.
+#
+# Combine after the base and prod files:
+#   docker compose --env-file env/staging.env -f docker-compose.yml -f compose.prod.yml -f compose.staging.yml up -d
+#
+# Defaults are intentionally private and collision-free. Set AKASHA_DATA_ROOT=/srv/akasha only
+# after legacy product-app data has been moved or approved for reuse.
+
+x-staging-app-env: &staging-app-env
+  AKASHA_ENVIRONMENT: ${AKASHA_ENVIRONMENT:-staging}
+  AKASHA_PUBLIC_BASE_URL: ${AKASHA_PUBLIC_BASE_URL:-http://127.0.0.1:8080}
+  AKASHA_GDAL_CACHEMAX_MB: ${AKASHA_GDAL_CACHEMAX_MB:-256}
+  AKASHA_BACKFILL_SEARCH_ITEM_CAP: ${AKASHA_BACKFILL_SEARCH_ITEM_CAP:-200}
+  AKASHA_SCRATCH_DIR: /tmp/akasha
+  GDAL_CACHEMAX: ${AKASHA_GDAL_CACHEMAX_MB:-256}
+
+x-staging-app-volumes: &staging-app-volumes
+  - ${AKASHA_DATA_ROOT:-/srv/akasha/ingestion-platform}/scratch:/tmp/akasha
+
+x-staging-logging: &staging-logging
+  driver: json-file
+  options:
+    max-size: ${AKASHA_CONTAINER_LOG_MAX_SIZE:-50m}
+    max-file: "${AKASHA_CONTAINER_LOG_MAX_FILES:-3}"
+
+x-small-resources: &small-resources
+  limits:
+    cpus: "0.50"
+    memory: 512M
+
+services:
+  api:
+    image: ${AKASHA_API_IMAGE:?Set AKASHA_API_IMAGE to an immutable API image, e.g. ghcr.io/OWNER/akasha-ingestion-api:<git-sha>}
+    build: !reset null
+    restart: unless-stopped
+    environment: *staging-app-env
+    volumes: *staging-app-volumes
+    logging: *staging-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 2G
+
+  migrate:
+    image: ${AKASHA_API_IMAGE:?Set AKASHA_API_IMAGE to an immutable API image, e.g. ghcr.io/OWNER/akasha-ingestion-api:<git-sha>}
+    build: !reset null
+    environment: *staging-app-env
+
+  seed:
+    image: ${AKASHA_API_IMAGE:?Set AKASHA_API_IMAGE to an immutable API image, e.g. ghcr.io/OWNER/akasha-ingestion-api:<git-sha>}
+    build: !reset null
+    environment: *staging-app-env
+
+  scheduler:
+    image: ${AKASHA_WORKER_IMAGE:?Set AKASHA_WORKER_IMAGE to an immutable worker image, e.g. ghcr.io/OWNER/akasha-ingestion-worker:<git-sha>}
+    build: !reset null
+    restart: unless-stopped
+    environment: *staging-app-env
+    volumes: *staging-app-volumes
+    logging: *staging-logging
+    deploy:
+      resources: *small-resources
+
+  worker-search:
+    image: ${AKASHA_WORKER_IMAGE:?Set AKASHA_WORKER_IMAGE to an immutable worker image, e.g. ghcr.io/OWNER/akasha-ingestion-worker:<git-sha>}
+    build: !reset null
+    command:
+      [
+        "celery",
+        "-A",
+        "akasha.jobs.celery_app.celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "-Q",
+        "search,maintenance",
+        "--concurrency=${AKASHA_WORKER_SEARCH_CONCURRENCY:-1}",
+      ]
+    restart: unless-stopped
+    environment: *staging-app-env
+    volumes: *staging-app-volumes
+    logging: *staging-logging
+    networks: [edge, internal]
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 2G
+
+  worker-download:
+    image: ${AKASHA_WORKER_IMAGE:?Set AKASHA_WORKER_IMAGE to an immutable worker image, e.g. ghcr.io/OWNER/akasha-ingestion-worker:<git-sha>}
+    build: !reset null
+    command:
+      [
+        "celery",
+        "-A",
+        "akasha.jobs.celery_app.celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "-Q",
+        "download",
+        "--concurrency=${AKASHA_WORKER_DOWNLOAD_CONCURRENCY:-1}",
+      ]
+    restart: unless-stopped
+    environment: *staging-app-env
+    volumes: *staging-app-volumes
+    logging: *staging-logging
+    networks: [edge, internal]
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 2G
+
+  worker-process:
+    image: ${AKASHA_WORKER_IMAGE:?Set AKASHA_WORKER_IMAGE to an immutable worker image, e.g. ghcr.io/OWNER/akasha-ingestion-worker:<git-sha>}
+    build: !reset null
+    command:
+      [
+        "celery",
+        "-A",
+        "akasha.jobs.celery_app.celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "-Q",
+        "preprocess,cog,stats",
+        "--concurrency=${AKASHA_WORKER_PROCESS_CONCURRENCY:-1}",
+      ]
+    restart: unless-stopped
+    environment: *staging-app-env
+    volumes: *staging-app-volumes
+    logging: *staging-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 3G
+
+  worker-heavy:
+    image: ${AKASHA_WORKER_IMAGE:?Set AKASHA_WORKER_IMAGE to an immutable worker image, e.g. ghcr.io/OWNER/akasha-ingestion-worker:<git-sha>}
+    build: !reset null
+    command:
+      [
+        "celery",
+        "-A",
+        "akasha.jobs.celery_app.celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "-Q",
+        "heavy-cpu",
+        "--concurrency=${AKASHA_WORKER_HEAVY_CONCURRENCY:-1}",
+      ]
+    restart: unless-stopped
+    environment: *staging-app-env
+    volumes: *staging-app-volumes
+    logging: *staging-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 5G
+
+  postgres:
+    restart: unless-stopped
+    volumes:
+      - ${AKASHA_DATA_ROOT:-/srv/akasha/ingestion-platform}/postgres:/var/lib/postgresql/data
+      - postgres-run:/var/run/postgresql
+    logging: *staging-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 4G
+
+  redis:
+    restart: unless-stopped
+    volumes:
+      - ${AKASHA_DATA_ROOT:-/srv/akasha/ingestion-platform}/redis:/data
+    logging: *staging-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+
+  minio:
+    restart: unless-stopped
+    volumes:
+      - ${AKASHA_DATA_ROOT:-/srv/akasha/ingestion-platform}/minio:/data
+    logging: *staging-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 2G
+
+  titiler:
+    restart: unless-stopped
+    environment:
+      GDAL_CACHEMAX: ${AKASHA_GDAL_CACHEMAX_MB:-256}
+    logging: *staging-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 2G
+
+  caddy:
+    # Bind to localhost by default. For private VM ingress use e.g.
+    # AKASHA_HTTP_BIND=10.10.2.4 AKASHA_HTTP_PORT=80 and match AKASHA_PUBLIC_BASE_URL.
+    ports: !override
+      - "${AKASHA_HTTP_BIND:-127.0.0.1}:${AKASHA_HTTP_PORT:-8080}:80"
+    restart: unless-stopped
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${AKASHA_DATA_ROOT:-/srv/akasha/ingestion-platform}/caddy/data:/data
+      - ${AKASHA_DATA_ROOT:-/srv/akasha/ingestion-platform}/caddy/config:/config
+    logging: *staging-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+
+  prometheus:
+    profiles: ["monitoring"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${AKASHA_PROMETHEUS_RETENTION_TIME:-7d}
+      - --storage.tsdb.retention.size=${AKASHA_PROMETHEUS_RETENTION_SIZE:-4GB}
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ${AKASHA_DATA_ROOT:-/srv/akasha/ingestion-platform}/monitoring/prometheus:/prometheus
+    logging: *staging-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 1G
+
+  blackbox-exporter:
+    profiles: ["monitoring"]
+    logging: *staging-logging
+    deploy:
+      resources: *small-resources
+
+  postgres-exporter:
+    profiles: ["monitoring"]
+    logging: *staging-logging
+    deploy:
+      resources: *small-resources
+
+  redis-exporter:
+    profiles: ["monitoring"]
+    logging: *staging-logging
+    deploy:
+      resources: *small-resources
+
+  node-exporter:
+    profiles: ["monitoring"]
+    logging: *staging-logging
+    deploy:
+      resources: *small-resources
+
+  cadvisor:
+    profiles: ["monitoring"]
+    logging: *staging-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 768M
+
+  grafana:
+    profiles: ["monitoring"]
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${AKASHA_DATA_ROOT:-/srv/akasha/ingestion-platform}/monitoring/grafana:/var/lib/grafana
+    logging: *staging-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 1G
+
+  loki:
+    profiles: ["monitoring"]
+    volumes:
+      - ./loki/local-config.yaml:/etc/loki/local-config.yaml:ro
+      - ${AKASHA_DATA_ROOT:-/srv/akasha/ingestion-platform}/monitoring/loki:/loki
+    logging: *staging-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 1G
+
+  promtail:
+    profiles: ["monitoring"]
+    logging: *staging-logging
+    deploy:
+      resources: *small-resources
+
+  alertmanager:
+    profiles: ["monitoring"]
+    logging: *staging-logging
+    deploy:
+      resources: *small-resources
+
+  flower:
+    profiles: ["tools", "monitoring"]
+    logging: *staging-logging
+    deploy:
+      resources: *small-resources
