@@ -186,6 +186,8 @@ jobs:
       - name: Validate rendered Compose has no runtime builds
         run: |
           set -euo pipefail
+          export AKASHA_API_IMAGE="${REGISTRY}/${IMAGE_NAMESPACE}/akasha-ingestion-api:${IMAGE_TAG}"
+          export AKASHA_WORKER_IMAGE="${REGISTRY}/${IMAGE_NAMESPACE}/akasha-ingestion-worker:${IMAGE_TAG}"
           docker compose \
             --profile tools \
             -f deploy/docker-compose.yml \
