@@ -115,6 +115,13 @@ class Settings(BaseSettings):
             return None
         return value.lower()
 
+    @field_validator("source_mirror_max_bytes_per_run", mode="before")
+    @classmethod
+    def normalize_optional_int(cls, value: object) -> object:
+        if value == "":
+            return None
+        return value
+
 
 @lru_cache
 def get_settings() -> Settings:
