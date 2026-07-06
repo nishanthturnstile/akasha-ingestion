@@ -180,12 +180,24 @@ class FieldIndexAvailableResponse(BaseModel):
     tileUrl: str
     statsUrl: str
     overlayUrl: str | None = None
+    pointUrl: str | None = None
     selection: FieldIndexSelection
     statistics: FieldIndexStatistics
     classStatistics: list[dict[str, Any]] = Field(default_factory=list)
     visualization: FieldIndexVisualization
     versions: dict[str, str]
     quality: FieldIndexQuality
+
+
+class FieldIndexPointResponse(BaseModel):
+    queryId: str
+    index: str
+    lng: float
+    lat: float
+    value: float | None
+    masked: bool
+    maskClass: int | None
+    source: str
 
 
 FieldIndexResponse = FieldIndexAvailableResponse | FieldIndexUnavailableResponse

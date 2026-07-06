@@ -38,6 +38,7 @@ from akasha.schemas import (
     AnalyticsReadinessResponse,
     APIResponse,
     ErrorPayload,
+    FieldIndexPointResponse,
     FieldIndexRequest,
     FieldIndexResponse,
     HealthResponse,
@@ -342,6 +343,45 @@ def create_app(
                 detail="invalid signature",
             )
         payload = service_obj.stats_for_query(query_id)
+        if payload is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="query not found")
+        return APIResponse(success=True, data=payload)
+
+    @app.get(
+        "/api/v1/analytics/field-index/{query_id}/point",
+        response_model=APIResponse[FieldIndexPointResponse],
+        responses=API_ERROR_RESPONSES | NOT_FOUND_ERROR_RESPONSE,
+    )
+    def field_index_point(
+        request: Request,
+        query_id: str,
+        lng: float,
+        lat: float,
+        op: str,
+        exp: int,
+        kid: str,
+        sig: str,
+    ) -> APIResponse[FieldIndexPointResponse]:
+        if op != "point":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="wrong operation")
+        service_obj: AnalyticsService = request.app.state.analytics_service
+        signing = service_obj._signing
+        query_hash = signing.query_hash(f"{query_id}:point")
+        if not signing.verify(
+            method="GET",
+            operation="point",
+            resource_id=query_id,
+            path_template=f"/api/v1/analytics/field-index/{query_id}/point",
+            geometry_or_query_hash=query_hash,
+            expires_at=exp,
+            key_id=kid,
+            signature=sig,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="invalid signature",
+            )
+        payload = service_obj.point_for_query(query_id, lng, lat)
         if payload is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="query not found")
         return APIResponse(success=True, data=payload)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pyproj import Geod
 from shapely.errors import ShapelyError
-from shapely.geometry import shape
+from shapely.geometry import Point, shape
 
 from akasha.catalog.field_query_repository import FieldQueryRecord, new_query_id
 from akasha.catalog.tile_layer_repository import TileLayerRecord
@@ -10,6 +10,7 @@ from akasha.config import Settings
 from akasha.processing.raster_stats import raster_stats
 from akasha.schemas import (
     FieldIndexAvailableResponse,
+    FieldIndexPointResponse,
     FieldIndexQuality,
     FieldIndexRequest,
     FieldIndexResolution,
@@ -126,6 +127,14 @@ class AnalyticsService:
                 path_template=overlay_template,
                 geometry_or_query_hash=self._signing.query_hash(f"{query_id}:overlay"),
             )
+            point_template = f"/api/v1/analytics/field-index/{query_id}/point"
+            point_ref = self._signing.sign(
+                method="GET",
+                operation="point",
+                resource_id=query_id,
+                path_template=point_template,
+                geometry_or_query_hash=self._signing.query_hash(f"{query_id}:point"),
+            )
             record = self._field_query_repository.save(
                 FieldQueryRecord(
                     query_id=query_id,
@@ -168,6 +177,10 @@ class AnalyticsService:
                 overlayUrl=(
                     f"{self._settings.public_base_url}{overlay_template}"
                     f"?{overlay_ref.query_string()}"
+                ),
+                pointUrl=(
+                    f"{self._settings.public_base_url}{point_template}"
+                    f"?{point_ref.query_string()}"
                 ),
                 selection=FieldIndexSelection(
                     windowDays=7,
@@ -247,6 +260,49 @@ class AnalyticsService:
             nodata=raster.nodata_value,
         )
 
+    def point_for_query(
+        self,
+        query_id: str,
+        lng: float,
+        lat: float,
+    ) -> FieldIndexPointResponse | None:
+        record = self._field_query_repository.get(query_id)
+        if record is None or not record.raster_output_id:
+            return None
+        if self._raster_repository is None or self._object_store is None:
+            return None
+        raster = self._raster_repository.get(record.raster_output_id)
+        if raster is None:
+            return None
+
+        payload = self._object_store.get_required(raster.object_path)
+        value, masked, mask_class = _sample_point(
+            payload,
+            geometry=record.field_geometry,
+            lng=lng,
+            lat=lat,
+            scale_factor=raster.scale_factor,
+            nodata=raster.nodata_value,
+        )
+        return FieldIndexPointResponse(
+            queryId=record.query_id,
+            index=record.index_name.upper(),
+            lng=lng,
+            lat=lat,
+            value=value,
+            masked=masked,
+            maskClass=mask_class,
+            source=self._source_for_query(record, raster),
+        )
+
+    def _source_for_query(self, record: FieldQueryRecord, raster: object) -> str:
+        scene_id = record.selected_scene_id or getattr(raster, "scene_id", None)
+        if self._scene_repository is not None and scene_id:
+            scene = self._scene_repository.get(scene_id)
+            if scene is not None:
+                return scene.source_id
+        return "sentinel-2-l2a"
+
     def _unavailable(
         self,
         request: FieldIndexRequest,
@@ -307,3 +363,44 @@ def _vertex_count(geometry: dict) -> int:
 
 
 _GEOD = Geod(ellps="WGS84")
+
+
+def _sample_point(
+    payload: bytes,
+    *,
+    geometry: dict,
+    lng: float,
+    lat: float,
+    scale_factor: float | None,
+    nodata: int | float | None,
+) -> tuple[float | None, bool, int | None]:
+    import numpy as np
+    from pyproj import CRS, Transformer
+    from rasterio.io import MemoryFile
+
+    field_geometry = shape(geometry)
+    point = Point(lng, lat)
+    if field_geometry.is_empty or not field_geometry.covers(point):
+        return None, True, None
+
+    with MemoryFile(payload) as memory_file, memory_file.open() as dataset:
+        x, y = lng, lat
+        if dataset.crs is not None and CRS.from_user_input(dataset.crs) != CRS.from_epsg(4326):
+            transformer = Transformer.from_crs("EPSG:4326", dataset.crs, always_xy=True)
+            x, y = transformer.transform(lng, lat)
+        row, col = dataset.index(x, y)
+        if row < 0 or col < 0 or row >= dataset.height or col >= dataset.width:
+            return None, True, None
+
+        raw_value = dataset.read(1, window=((row, row + 1), (col, col + 1)))[0, 0]
+        if not np.isfinite(raw_value):
+            return None, True, None
+        if dataset.nodata is not None and raw_value == dataset.nodata:
+            return None, True, None
+        if nodata is not None and raw_value == nodata:
+            return None, True, None
+
+    value = float(raw_value)
+    if scale_factor is not None and scale_factor != 0:
+        value /= float(scale_factor)
+    return round(value, 6), False, None
