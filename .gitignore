@@ -14,3 +14,4 @@ build/
 deploy/env/*.env
 !deploy/env/*.example.env
 .runtime/
+.playwright-mcp/**
