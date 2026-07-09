@@ -180,6 +180,60 @@ def create_titiler_tile_service(settings: Settings) -> TiTilerTileService:
     return TiTilerTileService(settings=settings)
 
 
+def create_resourcesat_ingestion_service(
+    settings: Settings,
+    engine: Engine | None = None,
+    *,
+    job_store: object | None = None,
+    stage_store: object | None = None,
+    aoi_repository: object | None = None,
+    source_provider_route_repository: object | None = None,
+    scene_repository: object | None = None,
+    asset_repository: object | None = None,
+    raster_repository: object | None = None,
+    object_store: object | None = None,
+    pgstac_repository: object | None = None,
+    tile_layer_repository: object | None = None,
+):
+    from akasha.providers.bhoonidhi import BhoonidhiClient
+    from akasha.services.resourcesat_ingestion import ResourceSatIngestionService
+
+    resolved_job_store = job_store or create_job_store(settings, engine)
+    resolved_stage_store = stage_store or create_stage_store(settings, engine)
+    resolved_aoi_repository = aoi_repository or create_aoi_repository(settings, engine)
+    resolved_source_provider_route_repository = (
+        source_provider_route_repository
+        or create_source_provider_route_repository(settings, engine)
+    )
+    resolved_scene_repository = scene_repository or create_scene_repository(settings, engine)
+    resolved_asset_repository = asset_repository or create_asset_repository(settings, engine)
+    resolved_raster_repository = raster_repository or create_raster_repository(settings, engine)
+    resolved_object_store = object_store or create_object_store(settings)
+    resolved_pgstac_repository = pgstac_repository
+    if resolved_pgstac_repository is None:
+        resolved_pgstac_repository = create_pgstac_repository(settings, engine)
+    resolved_tile_layer_repository = tile_layer_repository or create_tile_layer_repository(
+        settings,
+        engine,
+        raster_repository=resolved_raster_repository,
+        scene_repository=resolved_scene_repository,
+    )
+    return ResourceSatIngestionService(
+        job_store=resolved_job_store,
+        stage_store=resolved_stage_store,
+        settings=settings,
+        aoi_repository=resolved_aoi_repository,
+        object_store=resolved_object_store,
+        bhoonidhi_client=BhoonidhiClient(settings),
+        source_provider_route_repository=resolved_source_provider_route_repository,
+        scene_repository=resolved_scene_repository,
+        asset_repository=resolved_asset_repository,
+        raster_repository=resolved_raster_repository,
+        tile_layer_repository=resolved_tile_layer_repository,
+        pgstac_repository=resolved_pgstac_repository,
+    )
+
+
 def create_field_query_repository(
     settings: Settings,
     engine: Engine | None = None,

@@ -35,6 +35,7 @@ SENTINEL2_PROCESSING_RESOLUTION: dict[str, int] = {
     "ndbi": 20,
     "ndre": 20,
     "reci": 20,
+    "ndwi_green_nir": 10,
 }
 
 SENTINEL2_FORMULA_VERSION: dict[str, str] = {
@@ -44,6 +45,7 @@ SENTINEL2_FORMULA_VERSION: dict[str, str] = {
     "ndbi": "ndbi-s2-v1",
     "ndre": "ndre-s2-v1",
     "reci": "reci-s2-v1",
+    "ndwi_green_nir": "ndwi-green-nir-s2-v1",
 }
 
 
@@ -119,4 +121,3 @@ def reflectance_from_dn(
 def scl_valid_mask(scl: NDArray[np.integer]) -> NDArray[np.bool_]:
     valid_classes = np.isin(scl, np.array([4, 5, 6], dtype=scl.dtype))
     return valid_classes.astype(bool)
-

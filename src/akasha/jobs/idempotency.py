@@ -126,6 +126,120 @@ def compute_index_output_idempotency_key(
     )
 
 
+def compute_resourcesat_backfill_idempotency_key(
+    *,
+    source_id: str,
+    provider_route: str,
+    aoi_id: str,
+    date_start: str,
+    date_end: str,
+    mode: str,
+    request_params_version: str,
+    processing_profile_version: str,
+) -> str:
+    return _hash_material(
+        {
+            "job_type": "resourcesat_backfill",
+            "source_id": source_id,
+            "provider_route": provider_route,
+            "aoi_id": aoi_id,
+            "date_start": date_start,
+            "date_end": date_end,
+            "mode": mode,
+            "request_params_version": request_params_version,
+            "processing_profile_version": processing_profile_version,
+        }
+    )
+
+
+def compute_resourcesat_download_idempotency_key(
+    *,
+    source_id: str,
+    provider_route: str,
+    product_id: str,
+    request_params_version: str,
+    processing_profile_version: str,
+) -> str:
+    return _hash_material(
+        {
+            "job_type": "resourcesat_download",
+            "source_id": source_id,
+            "provider_route": provider_route,
+            "product_id": product_id,
+            "request_params_version": request_params_version,
+            "processing_profile_version": processing_profile_version,
+        }
+    )
+
+
+def compute_resourcesat_prepare_idempotency_key(
+    *,
+    source_id: str,
+    provider_route: str,
+    product_id: str,
+    raw_checksum_sha256: str,
+    request_params_version: str,
+    processing_profile_version: str,
+) -> str:
+    return _hash_material(
+        {
+            "job_type": "resourcesat_prepare",
+            "source_id": source_id,
+            "provider_route": provider_route,
+            "product_id": product_id,
+            "raw_checksum_sha256": raw_checksum_sha256,
+            "request_params_version": request_params_version,
+            "processing_profile_version": processing_profile_version,
+        }
+    )
+
+
+def compute_resourcesat_composite_idempotency_key(
+    *,
+    source_id: str,
+    aoi_id: str,
+    composite_date: str,
+    product_ids: list[str],
+    request_params_version: str,
+    processing_profile_version: str,
+) -> str:
+    return _hash_material(
+        {
+            "job_type": "resourcesat_composite",
+            "source_id": source_id,
+            "aoi_id": aoi_id,
+            "composite_date": composite_date,
+            "product_ids": ",".join(sorted(product_ids)),
+            "request_params_version": request_params_version,
+            "processing_profile_version": processing_profile_version,
+        }
+    )
+
+
+def compute_resourcesat_index_output_idempotency_key(
+    *,
+    source_id: str,
+    provider_route: str,
+    scene_or_composite_id: str,
+    index_name: str,
+    formula_version: str,
+    request_params_version: str,
+    processing_profile_version: str,
+) -> str:
+    return _hash_material(
+        {
+            "job_type": "resourcesat_index_output",
+            "source_id": source_id,
+            "provider_route": provider_route,
+            "scene_or_composite_id": scene_or_composite_id,
+            "index_name": index_name,
+            "formula_version": formula_version,
+            "request_params_version": request_params_version,
+            "processing_profile_version": processing_profile_version,
+        }
+    )
+
+
 def _hash_material(material: dict[str, str]) -> str:
     return sha256(
         dumps(material, sort_keys=True, separators=(",", ":")).encode(),

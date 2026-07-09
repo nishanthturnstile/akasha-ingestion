@@ -1,9 +1,26 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 from numpy.typing import NDArray
 
 from akasha.processing.sentinel2 import Sentinel2OutputProfile, output_profile
+
+
+@dataclass(frozen=True, slots=True)
+class IndexOutputProfile:
+    index_name: str
+    formula_version: str
+    dtype: str
+    scale_factor: float | None
+    nodata_value: int | float
+    clip_min: float | None
+    clip_max: float | None
+    processing_resolution: int | float
+
+
+OutputProfile = IndexOutputProfile | Sentinel2OutputProfile
 
 
 def calculate_index(
@@ -17,7 +34,7 @@ def calculate_index(
     mask = _base_mask(first, second, valid_mask)
     output = np.full(first.shape, np.nan, dtype="float32")
 
-    if normalized in {"ndvi", "ndmi", "ndbi", "ndre"}:
+    if normalized in {"ndvi", "ndmi", "ndbi", "ndre", "ndwi_green_nir"}:
         denominator = first + second
         formula_mask = mask & (np.abs(denominator) > 1e-6)
         output[formula_mask] = (first[formula_mask] - second[formula_mask]) / denominator[
@@ -44,8 +61,10 @@ def calculate_index(
 def encode_index_output(
     index_name: str,
     values: NDArray[np.floating],
-) -> tuple[NDArray[np.integer] | NDArray[np.floating], Sentinel2OutputProfile]:
-    profile = output_profile(index_name)
+    *,
+    profile: OutputProfile | None = None,
+) -> tuple[NDArray[np.integer] | NDArray[np.floating], OutputProfile]:
+    profile = profile or output_profile(index_name)
     valid = np.isfinite(values)
     if profile.clip_min is not None and profile.clip_max is not None:
         values = np.clip(values, profile.clip_min, profile.clip_max)
@@ -68,4 +87,3 @@ def _base_mask(
     if valid_mask is not None:
         mask &= valid_mask
     return mask
-

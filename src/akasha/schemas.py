@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from akasha.config import Environment
 from akasha.jobs.store import Job
+from akasha.processing.resourcesat import RESOURCESAT_SOURCE_COLLECTIONS, RESOURCESAT_SOURCE_IDS
 
 T = TypeVar("T")
 
@@ -46,9 +47,16 @@ class SyncRequest(BaseModel):
     aoi_id: str = Field(min_length=1)
     date_start: date
     date_end: date
-    job_type: Literal["mock_sync", "sentinel2_backfill"] = "mock_sync"
+    job_type: Literal["mock_sync", "sentinel2_backfill", "resourcesat_backfill"] = "mock_sync"
     provider_route: str | None = Field(default=None, min_length=1)
-    mode: Literal["metadata_only", "mirror_only", "full_pipeline"] = "metadata_only"
+    mode: Literal[
+        "metadata_only",
+        "mirror_only",
+        "download_only",
+        "prepare_only",
+        "composite_only",
+        "full_pipeline",
+    ] = "metadata_only"
 
     @model_validator(mode="after")
     def validate_date_range(self) -> Self:
@@ -61,8 +69,31 @@ class SyncRequest(BaseModel):
                 raise ValueError(
                     "sentinel2_backfill requires provider_route earthsearch:sentinel-2-l2a"
                 )
+            if self.mode not in {"metadata_only", "mirror_only", "full_pipeline"}:
+                raise ValueError(
+                    "sentinel2_backfill mode must be metadata_only, mirror_only, or full_pipeline"
+                )
+        elif self.job_type == "resourcesat_backfill":
+            if self.source_id not in RESOURCESAT_SOURCE_IDS:
+                raise ValueError("resourcesat_backfill requires a ResourceSat source_id")
+            expected_route = f"bhoonidhi:{RESOURCESAT_SOURCE_COLLECTIONS[self.source_id]}"
+            if self.provider_route != expected_route:
+                raise ValueError(
+                    f"resourcesat_backfill requires provider_route {expected_route}"
+                )
+            if self.mode not in {
+                "metadata_only",
+                "download_only",
+                "prepare_only",
+                "composite_only",
+                "full_pipeline",
+            }:
+                raise ValueError(
+                    "resourcesat_backfill mode must be metadata_only, download_only, "
+                    "prepare_only, composite_only, or full_pipeline"
+                )
         elif self.provider_route is not None:
-            raise ValueError("provider_route is only supported for sentinel2_backfill")
+            raise ValueError("provider_route is not supported for mock_sync")
         return self
 
 
@@ -106,8 +137,9 @@ class FieldIndexRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     geometry: dict[str, Any]
+    sourceId: str = Field(default="sentinel-2-l2a", min_length=1)
     crs: Literal["EPSG:4326"] = "EPSG:4326"
-    index: Literal["NDVI", "MSAVI", "NDMI", "NDBI", "NDRE", "RECI"]
+    index: Literal["NDVI", "MSAVI", "NDMI", "NDBI", "NDRE", "RECI", "NDWI_GREEN_NIR"]
     date: date
     fallbackPolicy: Literal["nearest_valid_scene"] = "nearest_valid_scene"
     maxCloudPercentage: float = Field(default=20.0, ge=0, le=100)

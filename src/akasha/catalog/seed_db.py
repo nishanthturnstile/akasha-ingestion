@@ -9,6 +9,133 @@ from sqlalchemy import text
 from akasha.catalog.seed import SEED_SOURCES
 from akasha.config import get_settings
 from akasha.db.session import create_db_engine
+from akasha.processing.resourcesat import (
+    BHOONIDHI_AWIFS_BOA_COLLECTION_ID,
+    BHOONIDHI_LISS3_BOA_COLLECTION_ID,
+    BHOONIDHI_LISS4_MX70_L2_COLLECTION_ID,
+    RESOURCESAT_AWIFS_BOA_SOURCE_ID,
+    RESOURCESAT_LISS3_BOA_SOURCE_ID,
+    RESOURCESAT_LISS4_MX70_L2_SOURCE_ID,
+    RESOURCESAT_MASK_METHOD,
+    RESOURCESAT_PROFILES,
+    RESOURCESAT_VALID_MASK_CLASSES,
+)
+
+DEFAULT_RETRY_POLICY = {"max_attempts": 3, "backoff": "exponential", "jitter": True}
+DEFAULT_STAGING_POLICY = {"max_concurrent_searches": 1, "max_concurrent_source_mirrors": 1}
+DEFAULT_CHECKSUM_POLICY = {"required": True, "algorithm": "sha256"}
+BHOONIDHI_RETRY_POLICY = {
+    "max_attempts": 3,
+    "backoff": "exponential",
+    "jitter": True,
+    "retryable_errors": ["timeout", "rate_limited", "transient_provider_error"],
+}
+BHOONIDHI_STAGING_POLICY = {
+    "enabled_by_default": False,
+    "approved_runtime_required": True,
+    "dry_run_allowed_without_credentials": True,
+    "data_root_required": "/srv/akasha",
+    "concurrency": {
+        "max_concurrent_searches": 1,
+        "max_concurrent_downloads": 1,
+        "max_concurrent_processing_jobs": 1,
+    },
+    "redaction": {
+        "enabled": True,
+        "redact_before_persist": True,
+        "fields": [
+            "username",
+            "password",
+            "token",
+            "cookie",
+            "download_url",
+            "signed_url",
+            "provider_href",
+        ],
+    },
+}
+BHOONIDHI_CHECKSUM_POLICY = {
+    "required": True,
+    "algorithm": "sha256",
+    "sidecar_required": True,
+    "validate_on_download": True,
+    "validate_before_catalog": True,
+}
+
+RESOURCESAT_SOURCE_PROFILES: dict[str, dict[str, Any]] = {
+    source_id: {
+        "instrument": profile.instrument,
+        "analysis_level": profile.analysis_level,
+        "provider_collection": profile.collection_id,
+        "pgstac_collection": profile.pgstac_collection,
+        "processing_profile_version": profile.processing_profile_version,
+        "validation_profile_version": profile.validation_profile_version,
+        "native_resolution_m": profile.native_resolution_m,
+        "native_resolution_tolerance_m": profile.native_resolution_tolerance_m,
+        "supported_indices": list(profile.supported_indices),
+        "band_order": list(profile.band_order),
+        "band_roles": dict(profile.band_roles),
+        "source_notes": profile.source_notes,
+    }
+    for source_id, profile in RESOURCESAT_PROFILES.items()
+}
+
+
+def _resourcesat_source_metadata(source_id: str, profile: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "disabled",
+        "execution_policy_ref": "bhoonidhi-default",
+        "validation_profile": {
+            "version": profile["validation_profile_version"],
+            "profile_family": "resourcesat-bhoonidhi-phase3",
+            "checks": [
+                "bhoonidhi_collection_contract",
+                "raw_checksum_validation",
+                "resourcesat_band_order_validation",
+                "resourcesat_mask_validation",
+                "derived_index_coverage_validation",
+                "pgstac_collection_registration",
+                "field_index_response_validation",
+            ],
+            "mask_method": RESOURCESAT_MASK_METHOD,
+            "valid_mask_classes": list(RESOURCESAT_VALID_MASK_CLASSES),
+            "notes": profile["source_notes"],
+        },
+        "processing_profile": {
+            "version": profile["processing_profile_version"],
+            "source": "bhoonidhi",
+            "level": profile["analysis_level"],
+            "instrument": profile["instrument"],
+            "band_order": profile["band_order"],
+            "band_roles": profile["band_roles"],
+            "reflectance_scale": 0.0001,
+            "reflectance_offset": 0.0,
+            "mask_method": RESOURCESAT_MASK_METHOD,
+            "valid_mask_classes": list(RESOURCESAT_VALID_MASK_CLASSES),
+            "supported_indices": profile["supported_indices"],
+            "native_resolution_m": profile["native_resolution_m"],
+            "native_resolution_tolerance_m": profile["native_resolution_tolerance_m"],
+            "display_composite": "FCC_NIR_RED_GREEN",
+        },
+        "license_profile": {
+            "profile": "nrsc-bhoonidhi-restricted",
+            "provider": "NRSC Bhoonidhi",
+            "serving": "internal_private",
+            "redistribution": "not_public",
+            "credential_required": True,
+        },
+        "provider_metadata": {
+            "primary_route": f"bhoonidhi:{profile['provider_collection']}",
+            "provider_adapter": "bhoonidhi",
+            "provider_collection": profile["provider_collection"],
+            "pgstac_collection": profile["pgstac_collection"],
+            "mask_method": RESOURCESAT_MASK_METHOD,
+            "profile_notes": profile["source_notes"],
+            "source_id": source_id,
+            "execution_policy_ref": "bhoonidhi-default",
+            "requires_approved_runtime": True,
+        },
+    }
 
 SOURCE_METADATA: dict[str, dict[str, Any]] = {
     "sentinel-2-l2a": {
@@ -37,7 +164,10 @@ SOURCE_METADATA: dict[str, dict[str, Any]] = {
             "primary_route": "earthsearch:sentinel-2-l2a",
             "pgstac_collection": "akasha-sentinel-2-l2a-derived-v1",
         },
-    }
+    },
+} | {
+    source_id: _resourcesat_source_metadata(source_id, profile)
+    for source_id, profile in RESOURCESAT_SOURCE_PROFILES.items()
 }
 
 PROVIDER_ROUTES: tuple[dict[str, Any], ...] = (
@@ -107,6 +237,63 @@ PROVIDER_ROUTES: tuple[dict[str, Any], ...] = (
             "phase2_optical_fallback": False,
         },
     },
+    {
+        "source_id": RESOURCESAT_LISS3_BOA_SOURCE_ID,
+        "provider_adapter": "bhoonidhi",
+        "provider_collection": BHOONIDHI_LISS3_BOA_COLLECTION_ID,
+        "provider_priority": 1,
+        "provider_role": "primary",
+        "status": "manual_only",
+        "access_mode": "authenticated_download",
+        "execution_policy_ref": "bhoonidhi-default",
+        "license_profile": "nrsc-bhoonidhi-restricted",
+        "metadata": {
+            "route_key": f"bhoonidhi:{BHOONIDHI_LISS3_BOA_COLLECTION_ID}",
+            "source_notes": RESOURCESAT_SOURCE_PROFILES[RESOURCESAT_LISS3_BOA_SOURCE_ID][
+                "source_notes"
+            ],
+            "requires_approved_runtime": True,
+            "mask_method": RESOURCESAT_MASK_METHOD,
+        },
+    },
+    {
+        "source_id": RESOURCESAT_LISS4_MX70_L2_SOURCE_ID,
+        "provider_adapter": "bhoonidhi",
+        "provider_collection": BHOONIDHI_LISS4_MX70_L2_COLLECTION_ID,
+        "provider_priority": 1,
+        "provider_role": "primary",
+        "status": "manual_only",
+        "access_mode": "authenticated_download",
+        "execution_policy_ref": "bhoonidhi-default",
+        "license_profile": "nrsc-bhoonidhi-restricted",
+        "metadata": {
+            "route_key": f"bhoonidhi:{BHOONIDHI_LISS4_MX70_L2_COLLECTION_ID}",
+            "source_notes": RESOURCESAT_SOURCE_PROFILES[RESOURCESAT_LISS4_MX70_L2_SOURCE_ID][
+                "source_notes"
+            ],
+            "requires_approved_runtime": True,
+            "mask_method": RESOURCESAT_MASK_METHOD,
+        },
+    },
+    {
+        "source_id": RESOURCESAT_AWIFS_BOA_SOURCE_ID,
+        "provider_adapter": "bhoonidhi",
+        "provider_collection": BHOONIDHI_AWIFS_BOA_COLLECTION_ID,
+        "provider_priority": 1,
+        "provider_role": "primary",
+        "status": "manual_only",
+        "access_mode": "authenticated_download",
+        "execution_policy_ref": "bhoonidhi-default",
+        "license_profile": "nrsc-bhoonidhi-restricted",
+        "metadata": {
+            "route_key": f"bhoonidhi:{BHOONIDHI_AWIFS_BOA_COLLECTION_ID}",
+            "source_notes": RESOURCESAT_SOURCE_PROFILES[RESOURCESAT_AWIFS_BOA_SOURCE_ID][
+                "source_notes"
+            ],
+            "requires_approved_runtime": True,
+            "mask_method": RESOURCESAT_MASK_METHOD,
+        },
+    },
 )
 
 VISUALIZATION_PROFILES: tuple[dict[str, Any], ...] = (
@@ -124,6 +311,54 @@ VISUALIZATION_PROFILES: tuple[dict[str, Any], ...] = (
         ],
         "nodata_color": "transparent",
         "version": "ndvi-default-v1",
+        "is_default": True,
+    },
+    {
+        "index_name": "msavi",
+        "value_domain_min": -1,
+        "value_domain_max": 1,
+        "display_min": -0.1,
+        "display_max": 0.8,
+        "palette_json": [
+            {"value": -0.1, "color": "#8c510a"},
+            {"value": 0.2, "color": "#f6e8c3"},
+            {"value": 0.5, "color": "#7fbf7b"},
+            {"value": 0.8, "color": "#1b7837"},
+        ],
+        "nodata_color": "transparent",
+        "version": "msavi-default-v1",
+        "is_default": True,
+    },
+    {
+        "index_name": "ndmi",
+        "value_domain_min": -1,
+        "value_domain_max": 1,
+        "display_min": -0.6,
+        "display_max": 0.8,
+        "palette_json": [
+            {"value": -0.6, "color": "#8c510a"},
+            {"value": -0.1, "color": "#dfc27d"},
+            {"value": 0.3, "color": "#80cdc1"},
+            {"value": 0.8, "color": "#01665e"},
+        ],
+        "nodata_color": "transparent",
+        "version": "ndmi-default-v1",
+        "is_default": True,
+    },
+    {
+        "index_name": "ndwi_green_nir",
+        "value_domain_min": -1,
+        "value_domain_max": 1,
+        "display_min": -0.6,
+        "display_max": 0.6,
+        "palette_json": [
+            {"value": -0.6, "color": "#a6611a"},
+            {"value": -0.1, "color": "#dfc27d"},
+            {"value": 0.2, "color": "#80cdc1"},
+            {"value": 0.6, "color": "#018571"},
+        ],
+        "nodata_color": "transparent",
+        "version": "ndwi-green-nir-default-v1",
         "is_default": True,
     },
 )
@@ -145,6 +380,44 @@ THRESHOLD_PROFILES: tuple[dict[str, Any], ...] = (
         "is_default": True,
         "version": "ndvi-generic-v1",
     },
+    *(
+        {
+            "profile_key": f"resourcesat-{source_id}-{index_name}-v1",
+            "index_name": index_name,
+            "crop": None,
+            "season": None,
+            "aoi_id": None,
+            "source_id": source_id,
+            "classes_json": classes,
+            "is_default": True,
+            "version": "resourcesat-thresholds-v1",
+        }
+        for source_id, profile in RESOURCESAT_SOURCE_PROFILES.items()
+        for index_name, classes in {
+            "ndvi": [
+                {"label": "Bare or stressed", "min": -1.0, "max": 0.2},
+                {"label": "Moderate vegetation", "min": 0.2, "max": 0.5},
+                {"label": "Healthy crop", "min": 0.5, "max": 0.75},
+                {"label": "Dense vegetation", "min": 0.75, "max": 1.0},
+            ],
+            "msavi": [
+                {"label": "Low vegetation cover", "min": -1.0, "max": 0.2},
+                {"label": "Moderate vegetation cover", "min": 0.2, "max": 0.5},
+                {"label": "High vegetation cover", "min": 0.5, "max": 1.0},
+            ],
+            "ndmi": [
+                {"label": "Dry vegetation", "min": -1.0, "max": -0.1},
+                {"label": "Moderate moisture", "min": -0.1, "max": 0.3},
+                {"label": "High moisture", "min": 0.3, "max": 1.0},
+            ],
+            "ndwi_green_nir": [
+                {"label": "Low water signal", "min": -1.0, "max": -0.1},
+                {"label": "Mixed moisture signal", "min": -0.1, "max": 0.2},
+                {"label": "Water or high moisture", "min": 0.2, "max": 1.0},
+            ],
+        }.items()
+        if index_name in profile["supported_indices"]
+    ),
 )
 
 
@@ -216,56 +489,78 @@ def seed_sources(connection) -> None:
         )
 
 
+def _execution_policy(
+    *,
+    policy_key: str,
+    provider_adapter: str,
+    auth_model: str,
+    enabled: bool,
+    version: str,
+    source_id: str | None = None,
+    retry_policy: dict[str, Any] | None = None,
+    staging_policy: dict[str, Any] | None = None,
+    checksum_policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "policy_key": policy_key,
+        "provider_adapter": provider_adapter,
+        "source_id": source_id,
+        "auth_model": auth_model,
+        "enabled": enabled,
+        "version": version,
+        "retry_policy_json": json.dumps(retry_policy or DEFAULT_RETRY_POLICY),
+        "staging_policy_json": json.dumps(staging_policy or DEFAULT_STAGING_POLICY),
+        "checksum_policy_json": json.dumps(checksum_policy or DEFAULT_CHECKSUM_POLICY),
+    }
+
+
 def seed_execution_policies(connection) -> None:
     policies = [
-        {
-            "policy_key": "mock-default",
-            "provider_adapter": "mock",
-            "source_id": None,
-            "auth_model": "none",
-            "enabled": True,
-            "version": "phase1-v1",
-        },
-        {
-            "policy_key": "earthsearch-default",
-            "provider_adapter": "earthsearch",
-            "source_id": None,
-            "auth_model": "none",
-            "enabled": True,
-            "version": "phase2-earthsearch-v1",
-        },
-        {
-            "policy_key": "cdse-default",
-            "provider_adapter": "cdse",
-            "source_id": None,
-            "auth_model": "oauth2",
-            "enabled": False,
-            "version": "phase1-v1",
-        },
-        {
-            "policy_key": "bhoonidhi-default",
-            "provider_adapter": "bhoonidhi",
-            "source_id": None,
-            "auth_model": "session_cookie_or_api_key",
-            "enabled": False,
-            "version": "phase1-v1",
-        },
-        {
-            "policy_key": "usgs-default",
-            "provider_adapter": "usgs",
-            "source_id": None,
-            "auth_model": "api_token",
-            "enabled": False,
-            "version": "phase1-v1",
-        },
-        {
-            "policy_key": "earthdata-default",
-            "provider_adapter": "earthdata",
-            "source_id": None,
-            "auth_model": "basic_or_token",
-            "enabled": False,
-            "version": "phase1-v1",
-        },
+        _execution_policy(
+            policy_key="mock-default",
+            provider_adapter="mock",
+            auth_model="none",
+            enabled=True,
+            version="phase1-v1",
+        ),
+        _execution_policy(
+            policy_key="earthsearch-default",
+            provider_adapter="earthsearch",
+            auth_model="none",
+            enabled=True,
+            version="phase2-earthsearch-v1",
+        ),
+        _execution_policy(
+            policy_key="cdse-default",
+            provider_adapter="cdse",
+            auth_model="oauth2",
+            enabled=False,
+            version="phase1-v1",
+        ),
+        _execution_policy(
+            policy_key="bhoonidhi-default",
+            provider_adapter="bhoonidhi",
+            auth_model="session_cookie_or_api_key",
+            enabled=False,
+            version="phase3-bhoonidhi-v1",
+            retry_policy=BHOONIDHI_RETRY_POLICY,
+            staging_policy=BHOONIDHI_STAGING_POLICY,
+            checksum_policy=BHOONIDHI_CHECKSUM_POLICY,
+        ),
+        _execution_policy(
+            policy_key="usgs-default",
+            provider_adapter="usgs",
+            auth_model="api_token",
+            enabled=False,
+            version="phase1-v1",
+        ),
+        _execution_policy(
+            policy_key="earthdata-default",
+            provider_adapter="earthdata",
+            auth_model="basic_or_token",
+            enabled=False,
+            version="phase1-v1",
+        ),
     ]
     for policy in policies:
         connection.execute(
@@ -288,9 +583,9 @@ def seed_execution_policies(connection) -> None:
                     :source_id,
                     :auth_model,
                     :enabled,
-                    '{"max_attempts": 3, "backoff": "exponential", "jitter": true}'::jsonb,
-                    '{"max_concurrent_searches": 1, "max_concurrent_source_mirrors": 1}'::jsonb,
-                    '{"required": true, "algorithm": "sha256"}'::jsonb,
+                    CAST(:retry_policy_json AS jsonb),
+                    CAST(:staging_policy_json AS jsonb),
+                    CAST(:checksum_policy_json AS jsonb),
                     :version
                 )
                 ON CONFLICT (policy_key) DO UPDATE
