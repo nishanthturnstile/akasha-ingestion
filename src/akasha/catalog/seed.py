@@ -21,7 +21,7 @@ SEED_SOURCES: tuple[SourceResponse, ...] = (
         analysis_level="L2",
         schedule_state="disabled",
         product_exposure="hidden",
-        supported_indices=["ndvi", "msavi", "savi", "ndwi", "gndvi"],
+        supported_indices=["ndvi", "msavi", "ndwi_green_nir"],
     ),
     SourceResponse(
         source_id="resourcesat-2a-liss3-boa",
@@ -31,7 +31,7 @@ SEED_SOURCES: tuple[SourceResponse, ...] = (
         analysis_level="BOA",
         schedule_state="disabled",
         product_exposure="hidden",
-        supported_indices=["ndvi", "msavi", "savi", "ndwi", "ndmi", "ndbi"],
+        supported_indices=["ndvi", "msavi", "ndmi", "ndwi_green_nir"],
     ),
     SourceResponse(
         source_id="resourcesat-2a-awifs-boa",
@@ -41,7 +41,7 @@ SEED_SOURCES: tuple[SourceResponse, ...] = (
         analysis_level="BOA",
         schedule_state="disabled",
         product_exposure="hidden",
-        supported_indices=["ndvi", "msavi", "savi", "ndwi", "ndmi", "ndbi"],
+        supported_indices=["ndvi", "msavi", "ndmi", "ndwi_green_nir"],
     ),
     SourceResponse(
         source_id="landsat-c2-l2",

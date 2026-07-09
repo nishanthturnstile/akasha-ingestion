@@ -27,6 +27,7 @@ from akasha.runtime import (
     create_pgstac_repository,
     create_profile_repository,
     create_raster_repository,
+    create_resourcesat_ingestion_service,
     create_scene_repository,
     create_source_catalog,
     create_source_provider_route_repository,
@@ -50,6 +51,7 @@ from akasha.security import require_api_key
 from akasha.services.analytics import AnalyticsService
 from akasha.services.ingestion import MockIngestionService
 from akasha.services.readiness import ReadinessService
+from akasha.services.resourcesat_ingestion import ResourceSatIngestionService
 from akasha.services.sentinel2_ingestion import Sentinel2IngestionService
 from akasha.services.titiler_tiles import TiTilerError, TiTilerTileService
 from akasha.storage.object_store import InMemoryObjectStore
@@ -132,6 +134,20 @@ def create_app(
         tile_layer_repository=tile_layer_repository,
         settings=app_settings,
     )
+    resourcesat_service = create_resourcesat_ingestion_service(
+        app_settings,
+        engine,
+        job_store=store,
+        stage_store=stage_store,
+        aoi_repository=aoi_repository,
+        source_provider_route_repository=source_provider_routes,
+        scene_repository=scene_repository,
+        asset_repository=asset_repository,
+        raster_repository=raster_repository,
+        object_store=objects,
+        pgstac_repository=pgstac_repository,
+        tile_layer_repository=tile_layer_repository,
+    )
     analytics_service = AnalyticsService(
         field_query_repository=field_query_repository,
         scene_repository=scene_repository,
@@ -181,6 +197,7 @@ def create_app(
     app.state.redis = redis_client
     app.state.ingestion_service = service
     app.state.sentinel2_ingestion_service = sentinel2_service
+    app.state.resourcesat_ingestion_service = resourcesat_service
     app.state.analytics_service = analytics_service
     app.state.readiness_service = readiness_service
 
@@ -268,6 +285,11 @@ def create_app(
                 request.app.state.sentinel2_ingestion_service
             )
             job = sentinel2_service_obj.start_backfill(payload)
+        elif payload.job_type == "resourcesat_backfill":
+            resourcesat_service_obj: ResourceSatIngestionService = (
+                request.app.state.resourcesat_ingestion_service
+            )
+            job = resourcesat_service_obj.start_backfill(payload)
         else:
             service_obj: MockIngestionService = request.app.state.ingestion_service
             job = service_obj.start_mock_sync(payload)

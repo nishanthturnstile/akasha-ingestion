@@ -13,6 +13,9 @@ class ProviderErrorCategory(StrEnum):
     ASSET_UNAVAILABLE = "asset_unavailable"
     ASSET_METADATA_INVALID = "asset_metadata_invalid"
     EXTERNAL_ASSET_READ_FAILED = "external_asset_read_failed"
+    DOWNLOAD_FAILED = "download_failed"
+    INVALID_PRODUCT = "invalid_product"
+    PREPARE_FAILED = "prepare_failed"
     METADATA_FAILED = "metadata_failed"
 
 
@@ -69,4 +72,3 @@ class NormalizedStacItem:
     cloud_percent: float | None
     assets: dict[str, NormalizedAsset]
     raw_item: dict[str, Any]
-

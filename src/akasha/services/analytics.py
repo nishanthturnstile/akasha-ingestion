@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from pyproj import Geod
 from shapely.errors import ShapelyError
 from shapely.geometry import Point, shape
 
 from akasha.catalog.field_query_repository import FieldQueryRecord, new_query_id
+from akasha.catalog.raster_repository import RasterOutputRecord
+from akasha.catalog.scene_repository import ProviderSceneRecord
 from akasha.catalog.tile_layer_repository import TileLayerRecord
 from akasha.config import Settings
 from akasha.processing.raster_stats import raster_stats
+from akasha.processing.resourcesat import (
+    RESOURCESAT_FORMULA_VERSION,
+    RESOURCESAT_MASK_METHOD,
+    RESOURCESAT_PROFILES,
+)
+from akasha.processing.sentinel2 import SENTINEL2_FORMULA_VERSION, SENTINEL2_INDEX_ASSETS
 from akasha.schemas import (
     FieldIndexAvailableResponse,
     FieldIndexPointResponse,
@@ -21,6 +31,18 @@ from akasha.schemas import (
     FieldIndexVisualization,
 )
 from akasha.services.signing import SigningService
+
+
+@dataclass(frozen=True, slots=True)
+class _FieldIndexCandidate:
+    scene: ProviderSceneRecord
+    raster: RasterOutputRecord
+    stats: dict[str, object]
+    class_stats: list[dict[str, object]]
+    valid_pixels: int
+    usable_pixel_percentage: float
+    threshold: object | None
+    visualization: object | None
 
 
 class AnalyticsService:
@@ -47,36 +69,44 @@ class AnalyticsService:
 
     def field_index(self, request: FieldIndexRequest) -> FieldIndexResponse:
         self._validate_geometry_limits(request)
+        source_id = request.sourceId
+        index_name = request.index.lower()
+        self._validate_source_index(source_id, index_name)
         if not self._has_available_dependencies():
             return self._unavailable(
                 request,
                 "Field-index selection dependencies are not configured",
             )
 
-        candidates = self._scene_repository.list_candidates(
-            source_id="sentinel-2-l2a",
-            requested_date=request.date,
-            window_days=7,
-            max_cloud_percentage=request.maxCloudPercentage,
-            limit=self._settings.max_candidate_scenes,
+        window_days = _field_index_window_days(source_id, self._settings)
+        candidates = sorted(
+            self._scene_repository.list_candidates(
+                source_id=source_id,
+                requested_date=request.date,
+                window_days=window_days,
+                max_cloud_percentage=request.maxCloudPercentage,
+                limit=self._settings.max_candidate_scenes,
+            ),
+            key=lambda scene: _candidate_prefilter_key(scene, source_id, request.date),
         )
+        options: list[_FieldIndexCandidate] = []
         for scene in candidates:
             raster = self._raster_repository.get_for_scene_index(
                 scene_id=scene.id or "",
-                index_name=request.index,
+                index_name=index_name,
             )
             if raster is None:
                 continue
             threshold = (
                 self._profile_repository.get_default_threshold(
-                    request.index,
-                    source_id="sentinel-2-l2a",
+                    index_name,
+                    source_id=source_id,
                 )
                 if self._profile_repository is not None
                 else None
             )
             visualization = (
-                self._profile_repository.get_default_visualization(request.index)
+                self._profile_repository.get_default_visualization(index_name)
                 if self._profile_repository is not None
                 else None
             )
@@ -88,18 +118,46 @@ class AnalyticsService:
                 threshold_classes=threshold.classes_json if threshold else [],
             )
             valid_pixels = int(stats.pop("validPixelCount", 0) or 0)
+            usable_percentage = float(stats["usablePixelPercentage"] or 0.0)
             if valid_pixels < self._settings.field_min_usable_pixels:
                 continue
-            usable = float(stats["usablePixelPercentage"] or 0.0) / 100
-            if usable < self._settings.field_usable_pixel_threshold:
+            if usable_percentage / 100 < self._settings.field_usable_pixel_threshold:
                 continue
+            options.append(
+                _FieldIndexCandidate(
+                    scene=scene,
+                    raster=raster,
+                    stats=stats,
+                    class_stats=class_stats,
+                    valid_pixels=valid_pixels,
+                    usable_pixel_percentage=usable_percentage,
+                    threshold=threshold,
+                    visualization=visualization,
+                )
+            )
 
+        if options:
+            selected = min(options, key=lambda option: _candidate_quality_key(option, request.date))
+            scene = selected.scene
+            raster = selected.raster
+            stats = selected.stats
+            class_stats = selected.class_stats
+            threshold = selected.threshold
+            visualization = selected.visualization
+            valid_pixels = selected.valid_pixels
+            warnings = _quality_warnings(source_id, scene)
+            quality_status = "WARN" if warnings else "GOOD"
+            quality_reason = (
+                "Field usable pixels satisfy threshold with source-specific warnings"
+                if warnings
+                else "Field usable pixels satisfy threshold"
+            )
             layer = self._tile_layer_repository.upsert_for_raster(
                 TileLayerRecord(
                     layer_id=None,
                     raster_output_id=raster.id or "",
                     visibility="private",
-                    metadata={"index_name": request.index.lower(), "scene_id": scene.id},
+                    metadata={"index_name": index_name, "scene_id": scene.id},
                 )
             )
             query_id = new_query_id()
@@ -139,16 +197,20 @@ class AnalyticsService:
                 FieldQueryRecord(
                     query_id=query_id,
                     field_geometry=request.geometry,
-                    index_name=request.index.lower(),
+                    index_name=index_name,
                     requested_date=request.date,
                     selected_scene_id=scene.id,
                     raster_output_id=raster.id,
                     layer_id=layer.layer_id,
                     valid_pixel_count=valid_pixels,
-                    selection_reason="quality_first",
+                    selection_reason="source_aware_quality_first",
                     stats_json={**stats, "cloudPercentage": scene.cloud_percent},
                     class_area_json=class_stats,
-                    quality_json={"status": "GOOD", "reason": "Field cloud cover within threshold"},
+                    quality_json={
+                        "status": quality_status,
+                        "reason": quality_reason,
+                        "warnings": warnings,
+                    },
                     visualization_profile_id=visualization.id if visualization else None,
                     threshold_profile_id=threshold.id if threshold else None,
                 )
@@ -162,14 +224,17 @@ class AnalyticsService:
                     scene.acquisition_at.date() if scene.acquisition_at else request.date
                 ),
                 source=scene.source_id,
-                providerRoute=scene.provider_metadata.get(
-                    "provider_route",
-                    "earthsearch:sentinel-2-l2a",
-                ),
+                providerRoute=_provider_route_for_scene(scene),
                 resolution=FieldIndexResolution(
-                    nativeMeters=raster.native_resolution or raster.processing_resolution or 10,
-                    processingMeters=raster.processing_resolution or 10,
-                    displayMeters=raster.display_resolution or raster.processing_resolution or 10,
+                    nativeMeters=_native_resolution(scene, raster, source_id),
+                    processingMeters=(
+                        raster.processing_resolution or _native_resolution(scene, raster, source_id)
+                    ),
+                    displayMeters=(
+                        raster.display_resolution
+                        or raster.processing_resolution
+                        or _native_resolution(scene, raster, source_id)
+                    ),
                 ),
                 layerId=layer.layer_id or "",
                 tileUrl=f"{self._settings.public_base_url}{tile_template}?{tile_ref.query_string()}",
@@ -183,8 +248,8 @@ class AnalyticsService:
                     f"?{point_ref.query_string()}"
                 ),
                 selection=FieldIndexSelection(
-                    windowDays=7,
-                    rule="quality_first",
+                    windowDays=window_days,
+                    rule="source_aware_quality_first",
                     validPixelCount=valid_pixels,
                 ),
                 statistics=FieldIndexStatistics(
@@ -203,23 +268,42 @@ class AnalyticsService:
                     legend=visualization.palette_json if visualization else [],
                 ),
                 versions={
-                    "atmosphericCorrection": "vendor-l2a",
-                    "cloudMask": raster.cloud_mask_version or "scl-v1",
-                    "formula": raster.formula_version or "",
+                    "atmosphericCorrection": _atmospheric_correction_version(source_id),
+                    "cloudMask": raster.cloud_mask_version or _default_cloud_mask(source_id),
+                    "formula": raster.formula_version or _default_formula_version(
+                        source_id,
+                        index_name,
+                    ),
                     "displayProfile": visualization.version if visualization else "",
                     "thresholdProfile": threshold.version if threshold else "",
                 },
                 quality=FieldIndexQuality(
-                    status="GOOD",
-                    reason="Field cloud cover within threshold",
-                    warnings=[],
+                    status=quality_status,
+                    reason=quality_reason,
+                    warnings=warnings,
                 ),
             )
 
         return self._unavailable(
             request,
-            "No optical scene with field usable-pixels >= 80% within +/- 7 days",
+            (
+                "No optical scene with field usable-pixels >= 80% within "
+                f"+/- {window_days} days"
+            ),
         )
+
+    def _validate_source_index(self, source_id: str, index_name: str) -> None:
+        if source_id == self._settings.sentinel2_preload_source_id:
+            if index_name not in SENTINEL2_INDEX_ASSETS:
+                raise ValueError(
+                    f"unsupported index for {source_id}: {index_name}"
+                )
+            return
+        profile = RESOURCESAT_PROFILES.get(source_id)
+        if profile is None:
+            raise ValueError(f"unsupported source_id: {source_id}")
+        if not profile.supports_index(index_name):
+            raise ValueError(f"unsupported index for {source_id}: {index_name}")
 
     def stats_for_query(self, query_id: str) -> dict[str, object] | None:
         record = self._field_query_repository.get(query_id)
@@ -324,7 +408,7 @@ class AnalyticsService:
             index=request.index,
             requestedDate=request.date,
             reason=reason,
-            searchedSources=["sentinel-2-l2a"],
+            searchedSources=[request.sourceId],
         )
 
     def _has_available_dependencies(self) -> bool:
@@ -360,6 +444,108 @@ def _vertex_count(geometry: dict) -> int:
     if geometry_type == "MultiPolygon":
         return sum(len(ring) for polygon in coordinates for ring in polygon)
     return 0
+
+
+def _field_index_window_days(source_id: str, settings: Settings) -> int:
+    if source_id == settings.resourcesat_liss3_preload_source_id:
+        return settings.resourcesat_liss3_preload_date_window_days
+    if source_id == settings.resourcesat_liss4_preload_source_id:
+        return settings.resourcesat_liss4_preload_date_window_days
+    if source_id == settings.resourcesat_awifs_preload_source_id:
+        return settings.resourcesat_awifs_preload_date_window_days
+    return 7
+
+
+def _candidate_prefilter_key(
+    scene: ProviderSceneRecord,
+    source_id: str,
+    requested_date: object,
+) -> tuple[int, float, float, float, str]:
+    return (
+        _date_distance_days(scene, requested_date),
+        float(scene.cloud_percent if scene.cloud_percent is not None else 101.0),
+        -float(scene.coverage_percentage if scene.coverage_percentage is not None else 0.0),
+        _profile_native_resolution(source_id),
+        scene.provider_product_id,
+    )
+
+
+def _candidate_quality_key(
+    option: _FieldIndexCandidate,
+    requested_date: object,
+) -> tuple[int, float, float, float, float, str]:
+    scene = option.scene
+    raster = option.raster
+    resolution = raster.native_resolution or raster.processing_resolution or scene.native_resolution
+    fallback_resolution = _profile_native_resolution(scene.source_id)
+    return (
+        _date_distance_days(scene, requested_date),
+        -option.usable_pixel_percentage,
+        -float(scene.coverage_percentage if scene.coverage_percentage is not None else 0.0),
+        float(scene.cloud_percent if scene.cloud_percent is not None else 101.0),
+        float(resolution if resolution is not None else fallback_resolution),
+        scene.provider_product_id,
+    )
+
+
+def _date_distance_days(scene: ProviderSceneRecord, requested_date: object) -> int:
+    if scene.acquisition_at is None or not hasattr(requested_date, "toordinal"):
+        return 9999
+    return abs((scene.acquisition_at.date() - requested_date).days)
+
+
+def _provider_route_for_scene(scene: ProviderSceneRecord) -> str:
+    provider_route = scene.provider_metadata.get("provider_route")
+    if isinstance(provider_route, str) and provider_route:
+        return provider_route
+    profile = RESOURCESAT_PROFILES.get(scene.source_id)
+    if profile is not None:
+        return f"bhoonidhi:{profile.collection_id}"
+    return "earthsearch:sentinel-2-l2a"
+
+
+def _quality_warnings(source_id: str, scene: ProviderSceneRecord) -> list[str]:
+    profile = RESOURCESAT_PROFILES.get(source_id)
+    if profile is None:
+        return []
+    warnings: list[str] = []
+    coverage = scene.coverage_percentage
+    if profile.instrument == "LISS-4" and coverage is not None and float(coverage) < 99.5:
+        warnings.append("LISS-4 scene only partially covers the requested AOI.")
+    if profile.instrument == "AWiFS":
+        warnings.append("AWiFS native resolution is coarse for field-scale analytics.")
+    return warnings
+
+
+def _atmospheric_correction_version(source_id: str) -> str:
+    profile = RESOURCESAT_PROFILES.get(source_id)
+    if profile is None:
+        return "vendor-l2a"
+    return f"bhoonidhi-{profile.analysis_level.lower()}"
+
+
+def _default_cloud_mask(source_id: str) -> str:
+    return RESOURCESAT_MASK_METHOD if source_id in RESOURCESAT_PROFILES else "scl-v1"
+
+
+def _default_formula_version(source_id: str, index_name: str) -> str:
+    if source_id in RESOURCESAT_PROFILES:
+        return RESOURCESAT_FORMULA_VERSION.get(index_name, "")
+    return SENTINEL2_FORMULA_VERSION.get(index_name, "")
+
+
+def _native_resolution(
+    scene: ProviderSceneRecord,
+    raster: RasterOutputRecord,
+    source_id: str,
+) -> float:
+    value = raster.native_resolution or raster.processing_resolution or scene.native_resolution
+    return float(value if value is not None else _profile_native_resolution(source_id))
+
+
+def _profile_native_resolution(source_id: str) -> float:
+    profile = RESOURCESAT_PROFILES.get(source_id)
+    return profile.native_resolution_m if profile is not None else 10.0
 
 
 _GEOD = Geod(ellps="WGS84")

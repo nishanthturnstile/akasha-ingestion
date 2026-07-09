@@ -62,6 +62,24 @@ class InMemoryObjectStore:
             )
         return object_path, checksum
 
+    def put_raw_file(
+        self,
+        *,
+        provider: str,
+        source_id: str,
+        product_id: str,
+        file_path: Path,
+        checksum_sha256: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> tuple[str, str]:
+        return self.put_file(
+            f"raw/{provider}/{source_id}/{product_id}/original.zip",
+            file_path,
+            checksum_sha256=checksum_sha256,
+            content_type="application/zip",
+            metadata=metadata,
+        )
+
     def put_json(self, object_path: str, payload: dict[str, Any]) -> tuple[str, str]:
         return self.put_bytes(
             object_path,
@@ -167,6 +185,57 @@ class InMemoryObjectStore:
             metadata=metadata,
         )
 
+    def put_prepared_cog_file(
+        self,
+        *,
+        provider: str,
+        source_id: str,
+        product_id: str,
+        asset_key: str,
+        file_path: Path,
+        checksum_sha256: str,
+        metadata: dict[str, str] | None = None,
+    ) -> tuple[str, str]:
+        return self.put_file(
+            f"prepared/{provider}/{source_id}/{product_id}/{asset_key}.cog.tif",
+            file_path,
+            checksum_sha256=checksum_sha256,
+            content_type="image/tiff; application=geotiff; profile=cloud-optimized",
+            metadata=metadata,
+        )
+
+    def put_composite_cog_file(
+        self,
+        *,
+        source_id: str,
+        aoi_id: str,
+        composite_date: str,
+        asset_key: str,
+        file_path: Path,
+        checksum_sha256: str,
+        metadata: dict[str, str] | None = None,
+    ) -> tuple[str, str]:
+        return self.put_file(
+            f"composite/{source_id}/{aoi_id}/{composite_date}/{asset_key}.tif",
+            file_path,
+            checksum_sha256=checksum_sha256,
+            content_type="image/tiff; application=geotiff; profile=cloud-optimized",
+            metadata=metadata,
+        )
+
+    def put_composite_manifest(
+        self,
+        *,
+        source_id: str,
+        aoi_id: str,
+        composite_date: str,
+        manifest: dict[str, Any],
+    ) -> tuple[str, str]:
+        return self.put_json(
+            f"composite/{source_id}/{aoi_id}/{composite_date}/manifest.json",
+            manifest,
+        )
+
     def put_derived_cog(
         self,
         *,
@@ -180,6 +249,25 @@ class InMemoryObjectStore:
         return self.put_bytes(
             f"indices/{provider}/{source_id}/{stac_item_id}/{index_name.lower()}.cog.tif",
             payload,
+            content_type="image/tiff; application=geotiff; profile=cloud-optimized",
+            metadata=metadata,
+        )
+
+    def put_derived_cog_file(
+        self,
+        *,
+        provider: str,
+        source_id: str,
+        stac_item_id: str,
+        index_name: str,
+        file_path: Path,
+        checksum_sha256: str,
+        metadata: dict[str, str] | None = None,
+    ) -> tuple[str, str]:
+        return self.put_file(
+            f"indices/{provider}/{source_id}/{stac_item_id}/{index_name.lower()}.cog.tif",
+            file_path,
+            checksum_sha256=checksum_sha256,
             content_type="image/tiff; application=geotiff; profile=cloud-optimized",
             metadata=metadata,
         )
@@ -253,6 +341,24 @@ class MinIOObjectStore:
         )
         return object_path, checksum
 
+    def put_raw_file(
+        self,
+        *,
+        provider: str,
+        source_id: str,
+        product_id: str,
+        file_path: Path,
+        checksum_sha256: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> tuple[str, str]:
+        return self.put_file(
+            f"raw/{provider}/{source_id}/{product_id}/original.zip",
+            file_path,
+            checksum_sha256=checksum_sha256,
+            content_type="application/zip",
+            metadata=metadata,
+        )
+
     def put_json(self, object_path: str, payload: dict[str, Any]) -> tuple[str, str]:
         return self.put_bytes(
             object_path,
@@ -308,7 +414,7 @@ class MinIOObjectStore:
         metadata: dict[str, str] | None = None,
     ) -> tuple[str, str]:
         self.ensure_bucket()
-        checksum = checksum_sha256 or _file_sha256(file_path)
+        checksum = checksum_sha256 or file_sha256(file_path)
         object_metadata = {"sha256": checksum}
         if metadata:
             object_metadata.update(metadata)
@@ -394,6 +500,57 @@ class MinIOObjectStore:
             metadata=metadata,
         )
 
+    def put_prepared_cog_file(
+        self,
+        *,
+        provider: str,
+        source_id: str,
+        product_id: str,
+        asset_key: str,
+        file_path: Path,
+        checksum_sha256: str,
+        metadata: dict[str, str] | None = None,
+    ) -> tuple[str, str]:
+        return self.put_file(
+            f"prepared/{provider}/{source_id}/{product_id}/{asset_key}.cog.tif",
+            file_path,
+            checksum_sha256=checksum_sha256,
+            content_type="image/tiff; application=geotiff; profile=cloud-optimized",
+            metadata=metadata,
+        )
+
+    def put_composite_cog_file(
+        self,
+        *,
+        source_id: str,
+        aoi_id: str,
+        composite_date: str,
+        asset_key: str,
+        file_path: Path,
+        checksum_sha256: str,
+        metadata: dict[str, str] | None = None,
+    ) -> tuple[str, str]:
+        return self.put_file(
+            f"composite/{source_id}/{aoi_id}/{composite_date}/{asset_key}.tif",
+            file_path,
+            checksum_sha256=checksum_sha256,
+            content_type="image/tiff; application=geotiff; profile=cloud-optimized",
+            metadata=metadata,
+        )
+
+    def put_composite_manifest(
+        self,
+        *,
+        source_id: str,
+        aoi_id: str,
+        composite_date: str,
+        manifest: dict[str, Any],
+    ) -> tuple[str, str]:
+        return self.put_json(
+            f"composite/{source_id}/{aoi_id}/{composite_date}/manifest.json",
+            manifest,
+        )
+
     def put_derived_cog(
         self,
         *,
@@ -407,6 +564,25 @@ class MinIOObjectStore:
         return self.put_bytes(
             f"indices/{provider}/{source_id}/{stac_item_id}/{index_name.lower()}.cog.tif",
             payload,
+            content_type="image/tiff; application=geotiff; profile=cloud-optimized",
+            metadata=metadata,
+        )
+
+    def put_derived_cog_file(
+        self,
+        *,
+        provider: str,
+        source_id: str,
+        stac_item_id: str,
+        index_name: str,
+        file_path: Path,
+        checksum_sha256: str,
+        metadata: dict[str, str] | None = None,
+    ) -> tuple[str, str]:
+        return self.put_file(
+            f"indices/{provider}/{source_id}/{stac_item_id}/{index_name.lower()}.cog.tif",
+            file_path,
+            checksum_sha256=checksum_sha256,
             content_type="image/tiff; application=geotiff; profile=cloud-optimized",
             metadata=metadata,
         )
@@ -465,7 +641,7 @@ def _json_bytes(payload: dict[str, Any]) -> bytes:
     return dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def _file_sha256(path: Path) -> str:
+def file_sha256(path: Path) -> str:
     digest = sha256()
     with path.open("rb") as file:
         for chunk in iter(lambda: file.read(1024 * 1024), b""):

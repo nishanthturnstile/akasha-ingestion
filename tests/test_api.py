@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from akasha.api.app import create_app
 from akasha.config import Environment, RuntimeBackend, Settings
+from akasha.jobs.store import Job, JobStatus
 from akasha.security import hash_api_key
 
 
@@ -126,6 +127,100 @@ def test_sentinel2_backfill_rejects_wrong_provider_route() -> None:
     assert "earthsearch:sentinel-2-l2a" in response.json()["error"]["message"]
 
 
+def test_resourcesat_backfill_sync_dispatches_resource_service() -> None:
+    api_key = "test-akasha-key"
+    fake_service = _FakeResourceSatService()
+    app = create_app(
+        Settings(
+            environment=Environment.TEST,
+            runtime_backend=RuntimeBackend.MEMORY,
+            task_always_eager=True,
+            api_key_hashes=f"test:{hash_api_key(api_key)}",
+        )
+    )
+    app.state.resourcesat_ingestion_service = fake_service
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/ingestion/sync",
+        headers={"X-API-Key": api_key},
+        json={
+            "source_id": "resourcesat-2a-liss3-boa",
+            "provider_route": "bhoonidhi:ResourceSat-2A_LISS3_BOA",
+            "aoi_id": "bangalore_60km_geodesic_aoi",
+            "date_start": "2026-01-01",
+            "date_end": "2026-01-31",
+            "job_type": "resourcesat_backfill",
+            "mode": "metadata_only",
+        },
+    )
+
+    assert response.status_code == 202
+    assert fake_service.received is not None
+    assert fake_service.received.job_type == "resourcesat_backfill"
+    assert fake_service.received.mode == "metadata_only"
+    assert response.json()["data"]["result_metadata"]["provider_route"] == (
+        "bhoonidhi:ResourceSat-2A_LISS3_BOA"
+    )
+
+
+def test_resourcesat_backfill_rejects_wrong_provider_route() -> None:
+    api_key = "test-akasha-key"
+    app = create_app(
+        Settings(
+            environment=Environment.TEST,
+            runtime_backend=RuntimeBackend.MEMORY,
+            task_always_eager=True,
+            api_key_hashes=f"test:{hash_api_key(api_key)}",
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/ingestion/sync",
+        headers={"X-API-Key": api_key},
+        json={
+            "source_id": "resourcesat-2a-liss3-boa",
+            "provider_route": "bhoonidhi:ResourceSat-2A_AWIFS_BOA",
+            "aoi_id": "bangalore_60km_geodesic_aoi",
+            "date_start": "2026-01-01",
+            "date_end": "2026-01-31",
+            "job_type": "resourcesat_backfill",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "bhoonidhi:ResourceSat-2A_LISS3_BOA" in response.json()["error"]["message"]
+
+
+def test_mock_sync_rejects_provider_route() -> None:
+    api_key = "test-akasha-key"
+    app = create_app(
+        Settings(
+            environment=Environment.TEST,
+            runtime_backend=RuntimeBackend.MEMORY,
+            api_key_hashes=f"test:{hash_api_key(api_key)}",
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/ingestion/sync",
+        headers={"X-API-Key": api_key},
+        json={
+            "source_id": "sentinel-2-l2a",
+            "provider_route": "earthsearch:sentinel-2-l2a",
+            "aoi_id": "bangalore_60km_geodesic_aoi",
+            "date_start": "2026-01-01",
+            "date_end": "2026-01-31",
+            "job_type": "mock_sync",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "provider_route is not supported for mock_sync" in response.json()["error"]["message"]
+
+
 def test_sync_rejects_reversed_date_range() -> None:
     api_key = "test-akasha-key"
     app = create_app(
@@ -208,3 +303,25 @@ def test_job_detail_returns_not_found_for_missing_uuid() -> None:
     body = response.json()
     assert body["success"] is False
     assert body["error"]["code"] == "404"
+
+
+class _FakeResourceSatService:
+    def __init__(self) -> None:
+        self.received = None
+
+    def start_backfill(self, payload):
+        self.received = payload
+        return Job(
+            job_id=str(uuid4()),
+            job_type=payload.job_type,
+            idempotency_key="resourcesat-test-key",
+            status=JobStatus.QUEUED,
+            source_id=payload.source_id,
+            aoi_id=payload.aoi_id,
+            date_start=payload.date_start.isoformat(),
+            date_end=payload.date_end.isoformat(),
+            result_metadata={
+                "mode": payload.mode,
+                "provider_route": payload.provider_route,
+            },
+        )

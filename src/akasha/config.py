@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
@@ -78,6 +78,80 @@ class Settings(BaseSettings):
     scratch_dir: Path = Path("/tmp/akasha")
     gdal_cachemax_mb: int = Field(default=512, gt=0)
 
+    bhoonidhi_api_base: str = "https://bhoonidhi-api.nrsc.gov.in"
+    bhoonidhi_user_id: str = ""
+    bhoonidhi_password: SecretStr = Field(default=SecretStr(""))
+    bhoonidhi_search_rps: float = Field(default=0.5, gt=0)
+    bhoonidhi_timeout_seconds: float = Field(default=300.0, gt=0)
+    bhoonidhi_download_chunk_bytes: int = Field(default=8 * 1024 * 1024, gt=0)
+    bhoonidhi_max_downloads_per_run: int = Field(default=1, gt=0)
+    bhoonidhi_approved_runtime_required: bool = True
+    bhoonidhi_approved_runtime: bool = False
+
+    resourcesat_profile_version: str = "resourcesat-phase3-v1"
+    resourcesat_liss3_profile_version: str = "resourcesat-liss3-boa-v1"
+    resourcesat_liss4_profile_version: str = "resourcesat-liss4-mx70-l2-v1"
+    resourcesat_awifs_profile_version: str = "resourcesat-awifs-boa-v1"
+    resourcesat_backfill_date_window_days: int = Field(default=30, gt=0)
+    resourcesat_approved_data_root: Path | None = None
+
+    resourcesat_liss3_preload_source_id: str = "resourcesat-2a-liss3-boa"
+    resourcesat_liss3_preload_aoi_id: str = "bangalore_60km_geodesic_aoi"
+    resourcesat_liss3_preload_provider_route: str = "bhoonidhi:ResourceSat-2A_LISS3_BOA"
+    resourcesat_liss3_preload_date_window_days: int = Field(default=30, gt=0)
+    resourcesat_liss3_preload_refresh_days: int = Field(default=14, gt=0)
+    resourcesat_liss3_preload_freshness_max_age_hours: int = Field(default=336, gt=0)
+    resourcesat_liss3_preload_schedule_enabled: bool = False
+    resourcesat_liss3_preload_schedule_day_of_week: str = "tue"
+    resourcesat_liss3_preload_schedule_hour_utc: int = Field(default=3, ge=0, le=23)
+    resourcesat_liss3_preload_schedule_minute_utc: int = Field(default=0, ge=0, le=59)
+    resourcesat_liss3_readiness_enabled: bool = False
+    resourcesat_liss3_readiness_required_indices: tuple[str, ...] = ("ndvi",)
+    resourcesat_liss3_processing_resolution_m: float | None = Field(default=None, gt=0)
+    resourcesat_liss3_composite_min_coverage_percent: float = Field(
+        default=95.0,
+        ge=0,
+        le=100,
+    )
+
+    resourcesat_liss4_preload_source_id: str = "resourcesat-2a-liss4-mx70-l2"
+    resourcesat_liss4_preload_aoi_id: str = "bangalore_60km_geodesic_aoi"
+    resourcesat_liss4_preload_provider_route: str = "bhoonidhi:ResourceSat-2A_LISS4-MX70_L2"
+    resourcesat_liss4_preload_date_window_days: int = Field(default=30, gt=0)
+    resourcesat_liss4_preload_refresh_days: int = Field(default=14, gt=0)
+    resourcesat_liss4_preload_freshness_max_age_hours: int = Field(default=336, gt=0)
+    resourcesat_liss4_preload_schedule_enabled: bool = False
+    resourcesat_liss4_preload_schedule_day_of_week: str = "wed"
+    resourcesat_liss4_preload_schedule_hour_utc: int = Field(default=3, ge=0, le=23)
+    resourcesat_liss4_preload_schedule_minute_utc: int = Field(default=30, ge=0, le=59)
+    resourcesat_liss4_readiness_enabled: bool = False
+    resourcesat_liss4_readiness_required_indices: tuple[str, ...] = ("ndvi",)
+    resourcesat_liss4_processing_resolution_m: float | None = Field(default=None, gt=0)
+    resourcesat_liss4_composite_min_coverage_percent: float = Field(
+        default=10.0,
+        ge=0,
+        le=100,
+    )
+
+    resourcesat_awifs_preload_source_id: str = "resourcesat-2a-awifs-boa"
+    resourcesat_awifs_preload_aoi_id: str = "bangalore_60km_geodesic_aoi"
+    resourcesat_awifs_preload_provider_route: str = "bhoonidhi:ResourceSat-2A_AWIFS_BOA"
+    resourcesat_awifs_preload_date_window_days: int = Field(default=30, gt=0)
+    resourcesat_awifs_preload_refresh_days: int = Field(default=14, gt=0)
+    resourcesat_awifs_preload_freshness_max_age_hours: int = Field(default=336, gt=0)
+    resourcesat_awifs_preload_schedule_enabled: bool = False
+    resourcesat_awifs_preload_schedule_day_of_week: str = "thu"
+    resourcesat_awifs_preload_schedule_hour_utc: int = Field(default=4, ge=0, le=23)
+    resourcesat_awifs_preload_schedule_minute_utc: int = Field(default=0, ge=0, le=59)
+    resourcesat_awifs_readiness_enabled: bool = False
+    resourcesat_awifs_readiness_required_indices: tuple[str, ...] = ("ndvi",)
+    resourcesat_awifs_processing_resolution_m: float | None = Field(default=None, gt=0)
+    resourcesat_awifs_composite_min_coverage_percent: float = Field(
+        default=60.0,
+        ge=0,
+        le=100,
+    )
+
     field_max_vertices: int = Field(default=5000, gt=0)
     field_max_area_sq_km: float = Field(default=25.0, gt=0)
     field_min_usable_pixels: int = Field(default=1, gt=0)
@@ -108,10 +182,17 @@ class Settings(BaseSettings):
     def normalize_log_level(cls, value: str) -> str:
         return value.upper()
 
+    @field_validator("aws_request_payer", mode="before")
+    @classmethod
+    def normalize_optional_string(cls, value: object) -> object:
+        if value == "":
+            return None
+        return value
+
     @field_validator("aws_request_payer")
     @classmethod
     def normalize_aws_request_payer(cls, value: str | None) -> str | None:
-        if value is None or value == "":
+        if value is None:
             return None
         return value.lower()
 
@@ -121,6 +202,124 @@ class Settings(BaseSettings):
         if value == "":
             return None
         return value
+
+    @field_validator(
+        "resourcesat_liss3_readiness_required_indices",
+        "resourcesat_liss4_readiness_required_indices",
+        "resourcesat_awifs_readiness_required_indices",
+        mode="before",
+    )
+    @classmethod
+    def normalize_index_tuple(cls, value: object) -> object:
+        if isinstance(value, str):
+            return tuple(item.strip().lower() for item in value.split(",") if item.strip())
+        return value
+
+    @field_validator(
+        "resourcesat_liss3_processing_resolution_m",
+        "resourcesat_liss4_processing_resolution_m",
+        "resourcesat_awifs_processing_resolution_m",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_float(cls, value: object) -> object:
+        if value == "":
+            return None
+        return value
+
+    @field_validator("resourcesat_approved_data_root", mode="before")
+    @classmethod
+    def normalize_optional_path(cls, value: object) -> object:
+        if value == "":
+            return None
+        return value
+
+
+_DEFAULT_RESOURCESAT_APPROVED_ROOT = Path("/srv/akasha")
+_UNSAFE_RESOURCESAT_RUNTIME_ROOTS = (
+    PurePosixPath("/"),
+    PurePosixPath("/tmp"),
+    PurePosixPath("/var/tmp"),
+    PurePosixPath("/var/lib/docker"),
+    PurePosixPath("/data/coolify"),
+)
+
+
+def validate_resourcesat_runtime_roots(settings: Settings, *, dry_run: bool) -> None:
+    if dry_run:
+        return
+
+    runtime_roots = {"scratch_dir": settings.scratch_dir}
+    approved_roots = [_DEFAULT_RESOURCESAT_APPROVED_ROOT]
+    if settings.resourcesat_approved_data_root is not None:
+        approved_roots.append(settings.resourcesat_approved_data_root)
+
+    unsafe_approved = [
+        str(root) for root in approved_roots if _is_unsafe_resourcesat_root(Path(root))
+    ]
+    if unsafe_approved:
+        joined = ", ".join(unsafe_approved)
+        raise ValueError(f"unsafe ResourceSat approved data root configured: {joined}")
+
+    for name, root in runtime_roots.items():
+        path = Path(root)
+        if _is_unsafe_resourcesat_root(path):
+            raise ValueError(f"unsafe ResourceSat runtime root for {name}: {path}")
+        if not any(_is_under_approved_root(path, approved) for approved in approved_roots):
+            approved = ", ".join(str(item) for item in approved_roots)
+            raise ValueError(
+                f"ResourceSat runtime root for {name} must be under an approved data root "
+                f"({approved}): {path}"
+            )
+
+
+def _is_unsafe_resourcesat_root(path: Path) -> bool:
+    return any(_is_unsafe_posix_path(item) for item in _path_posix_forms(path))
+
+
+def _path_posix_forms(path: Path) -> tuple[str, str]:
+    resolved = path.expanduser().resolve(strict=False)
+    return (path.as_posix(), resolved.as_posix())
+
+
+def _is_unsafe_posix_path(path_text: str) -> bool:
+    path = PurePosixPath(path_text)
+    for unsafe in _UNSAFE_RESOURCESAT_RUNTIME_ROOTS:
+        if unsafe == PurePosixPath("/"):
+            if path == unsafe:
+                return True
+            continue
+        if _is_relative_to_posix(path, unsafe):
+            return True
+    return False
+
+
+def _is_under_approved_root(path: Path, approved_root: Path) -> bool:
+    if _is_relative_to_path(
+        path.expanduser().resolve(strict=False),
+        approved_root.expanduser().resolve(strict=False),
+    ):
+        return True
+    return _is_relative_to_posix(
+        PurePosixPath(path.as_posix()),
+        PurePosixPath(approved_root.as_posix()),
+    )
+
+
+def _is_relative_to_path(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_relative_to_posix(path: PurePosixPath, root: PurePosixPath) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 @lru_cache

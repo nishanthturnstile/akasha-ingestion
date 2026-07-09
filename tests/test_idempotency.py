@@ -3,6 +3,9 @@ from __future__ import annotations
 from akasha.jobs.idempotency import (
     compute_backfill_idempotency_key,
     compute_index_output_idempotency_key,
+    compute_resourcesat_backfill_idempotency_key,
+    compute_resourcesat_composite_idempotency_key,
+    compute_resourcesat_index_output_idempotency_key,
     compute_sync_idempotency_key,
 )
 
@@ -79,4 +82,68 @@ def test_index_output_idempotency_key_includes_formula_version() -> None:
 
     assert compute_index_output_idempotency_key(formula_version="ndvi-s2-v1", **common) != (
         compute_index_output_idempotency_key(formula_version="ndvi-s2-v2", **common)
+    )
+
+
+def test_resourcesat_backfill_idempotency_key_includes_mode_and_route() -> None:
+    common = {
+        "source_id": "resourcesat-2a-liss3-boa",
+        "aoi_id": "bangalore_60km_geodesic_aoi",
+        "date_start": "2026-01-01",
+        "date_end": "2026-01-31",
+        "request_params_version": "v1",
+        "processing_profile_version": "resourcesat-liss3-boa-processing-v1",
+    }
+
+    metadata = compute_resourcesat_backfill_idempotency_key(
+        provider_route="bhoonidhi:ResourceSat-2A_LISS3_BOA",
+        mode="metadata_only",
+        **common,
+    )
+    full = compute_resourcesat_backfill_idempotency_key(
+        provider_route="bhoonidhi:ResourceSat-2A_LISS3_BOA",
+        mode="full_pipeline",
+        **common,
+    )
+    other_route = compute_resourcesat_backfill_idempotency_key(
+        provider_route="bhoonidhi:ResourceSat-2A_AWIFS_BOA",
+        mode="metadata_only",
+        **common,
+    )
+
+    assert metadata != full
+    assert metadata != other_route
+
+
+def test_resourcesat_composite_idempotency_key_sorts_product_ids() -> None:
+    common = {
+        "source_id": "resourcesat-2a-liss3-boa",
+        "aoi_id": "bangalore_60km_geodesic_aoi",
+        "composite_date": "2026-01-31",
+        "request_params_version": "v1",
+        "processing_profile_version": "resourcesat-liss3-boa-processing-v1",
+    }
+
+    assert compute_resourcesat_composite_idempotency_key(
+        product_ids=["P2", "P1"],
+        **common,
+    ) == compute_resourcesat_composite_idempotency_key(product_ids=["P1", "P2"], **common)
+
+
+def test_resourcesat_index_output_key_uses_scene_and_formula_version() -> None:
+    common = {
+        "source_id": "resourcesat-2a-liss3-boa",
+        "provider_route": "bhoonidhi:ResourceSat-2A_LISS3_BOA",
+        "scene_or_composite_id": "resourcesat-2a-liss3-boa:composite:aoi:2026-01-31",
+        "index_name": "ndwi_green_nir",
+        "request_params_version": "v1",
+        "processing_profile_version": "resourcesat-liss3-boa-processing-v1",
+    }
+
+    assert compute_resourcesat_index_output_idempotency_key(
+        formula_version="ndwi-green-nir-default-v1",
+        **common,
+    ) != compute_resourcesat_index_output_idempotency_key(
+        formula_version="ndwi-green-nir-default-v2",
+        **common,
     )
