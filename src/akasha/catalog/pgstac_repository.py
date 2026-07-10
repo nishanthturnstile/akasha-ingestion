@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from hashlib import sha256
+from pathlib import PurePath
 from typing import Any
+from uuid import UUID
 
 import pystac
 from sqlalchemy import Engine, text
@@ -218,7 +221,21 @@ def _resourcesat_derived_item_id(
 def _json_dumps(value: dict[str, Any]) -> str:
     from json import dumps
 
-    return dumps(value, sort_keys=True)
+    return dumps(value, sort_keys=True, default=_json_default)
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise TypeError("Non-finite Decimal values are not valid STAC JSON.")
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, PurePath):
+        return value.as_posix()
+    if isinstance(value, UUID):
+        return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not STAC JSON serializable.")
 
 
 def collection_json(collection_id: str) -> dict[str, Any]:

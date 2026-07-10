@@ -143,7 +143,7 @@ def test_staging_compose_wires_safe_bounded_resourcesat_runtime() -> None:
     )
     assert (
         "AKASHA_BHOONIDHI_MAX_DOWNLOADS_PER_RUN: "
-        "${AKASHA_BHOONIDHI_MAX_DOWNLOADS_PER_RUN:-3}" in compose
+        "${AKASHA_BHOONIDHI_MAX_DOWNLOADS_PER_RUN:-7}" in compose
     )
     assert (
         "AKASHA_SOURCE_MIRROR_REQUIRED_HEADROOM_BYTES: "
