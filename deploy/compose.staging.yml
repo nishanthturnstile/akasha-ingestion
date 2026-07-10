@@ -162,6 +162,7 @@ services:
     environment: *staging-app-env
     volumes: *staging-app-volumes
     logging: *staging-logging
+    networks: [edge, internal]
     deploy:
       resources:
         limits:

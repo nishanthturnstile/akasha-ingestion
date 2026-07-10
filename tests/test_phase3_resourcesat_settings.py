@@ -153,3 +153,12 @@ def test_staging_compose_wires_safe_bounded_resourcesat_runtime() -> None:
         "AKASHA_RESOURCESAT_LISS3_READINESS_ENABLED: "
         "${AKASHA_RESOURCESAT_LISS3_READINESS_ENABLED:-true}" in compose
     )
+
+
+def test_staging_resourcesat_heavy_worker_has_provider_egress() -> None:
+    compose = (REPO_ROOT / "deploy" / "compose.staging.yml").read_text(encoding="utf-8")
+    worker_start = compose.index("  worker-heavy:")
+    worker_end = compose.index("\n  postgres:", worker_start)
+    worker_heavy = compose[worker_start:worker_end]
+
+    assert "    networks: [edge, internal]" in worker_heavy
