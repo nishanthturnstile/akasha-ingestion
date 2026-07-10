@@ -6,6 +6,8 @@ import pytest
 
 from akasha.config import Settings, validate_resourcesat_runtime_roots
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 def test_resourcesat_settings_defaults_are_safe_and_gated() -> None:
     settings = Settings()
@@ -126,3 +128,37 @@ def test_resourcesat_runtime_root_preflight_accepts_configured_approved_root() -
     )
 
     validate_resourcesat_runtime_roots(settings, dry_run=False)
+
+
+def test_staging_compose_wires_safe_bounded_resourcesat_runtime() -> None:
+    compose = (REPO_ROOT / "deploy" / "compose.staging.yml").read_text(encoding="utf-8")
+
+    data_root = "${AKASHA_DATA_ROOT:-/srv/akasha/ingestion-platform}"
+    assert f"AKASHA_SCRATCH_DIR: {data_root}/scratch" in compose
+    assert f"AKASHA_RESOURCESAT_APPROVED_DATA_ROOT: {data_root}" in compose
+    assert f"- {data_root}/scratch:{data_root}/scratch" in compose
+    assert (
+        "AKASHA_BHOONIDHI_APPROVED_RUNTIME: "
+        "${AKASHA_BHOONIDHI_APPROVED_RUNTIME:-false}" in compose
+    )
+    assert (
+        "AKASHA_BHOONIDHI_MAX_DOWNLOADS_PER_RUN: "
+        "${AKASHA_BHOONIDHI_MAX_DOWNLOADS_PER_RUN:-7}" in compose
+    )
+    assert (
+        "AKASHA_SOURCE_MIRROR_REQUIRED_HEADROOM_BYTES: "
+        "${AKASHA_SOURCE_MIRROR_REQUIRED_HEADROOM_BYTES:-21474836480}" in compose
+    )
+    assert (
+        "AKASHA_RESOURCESAT_LISS3_READINESS_ENABLED: "
+        "${AKASHA_RESOURCESAT_LISS3_READINESS_ENABLED:-true}" in compose
+    )
+
+
+def test_staging_resourcesat_heavy_worker_has_provider_egress() -> None:
+    compose = (REPO_ROOT / "deploy" / "compose.staging.yml").read_text(encoding="utf-8")
+    worker_start = compose.index("  worker-heavy:")
+    worker_end = compose.index("\n  postgres:", worker_start)
+    worker_heavy = compose[worker_start:worker_end]
+
+    assert "    networks: [edge, internal]" in worker_heavy

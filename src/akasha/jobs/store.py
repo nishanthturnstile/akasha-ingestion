@@ -107,6 +107,7 @@ class InMemoryJobStore:
             job.object_path = object_path
             job.checksum_sha256 = checksum_sha256
             job.result_metadata = result_metadata or {}
+            job.error = None
             job.completed_at = datetime.now(UTC)
             job.updated_at = job.completed_at
             return job

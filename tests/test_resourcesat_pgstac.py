@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from decimal import Decimal
+from pathlib import PurePosixPath
+from uuid import UUID
 
 import pystac
+import pytest
 
 from akasha.catalog.pgstac_repository import (
     CLASSIFICATION_EXTENSION,
@@ -11,6 +16,7 @@ from akasha.catalog.pgstac_repository import (
     RASTER_EXTENSION,
     RESOURCESAT_LISS3_DERIVED_COLLECTION_ID,
     PgstacRepository,
+    _json_dumps,
     build_resourcesat_derived_item,
     collection_json,
 )
@@ -103,6 +109,35 @@ def test_pgstac_repository_registers_resourcesat_collection_explicitly() -> None
     assert RESOURCESAT_LISS3_DERIVED_COLLECTION_ID in collection_payload
     assert "ResourceSat-2A LISS-3 BOA" in collection_payload
     assert "Sentinel-2 L2A" not in collection_payload
+
+
+def test_pgstac_json_serializes_database_native_metadata_types() -> None:
+    identifier = UUID("11111111-1111-4111-8111-111111111111")
+
+    payload = json.loads(
+        _json_dumps(
+            {
+                "integral": Decimal("24.0"),
+                "fractional": Decimal("28.32"),
+                "timestamp": datetime(2026, 3, 19, tzinfo=UTC),
+                "identifier": identifier,
+                "path": PurePosixPath("indices/ndvi.tif"),
+            }
+        )
+    )
+
+    assert payload == {
+        "fractional": 28.32,
+        "identifier": str(identifier),
+        "integral": 24,
+        "path": "indices/ndvi.tif",
+        "timestamp": "2026-03-19T00:00:00+00:00",
+    }
+
+
+def test_pgstac_json_rejects_non_finite_decimal() -> None:
+    with pytest.raises(TypeError, match="Non-finite Decimal"):
+        _json_dumps({"invalid": Decimal("NaN")})
 
 
 def _resourcesat_scene() -> ProviderSceneRecord:
