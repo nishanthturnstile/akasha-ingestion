@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
 import pytest
 
 from akasha.config import Environment, RuntimeBackend, Settings
 from akasha.jobs.celery_app import celery_app
+from akasha.jobs.sql_store import PostgresJobStore
 from akasha.jobs.store import InMemoryJobStore, JobStatus
 from akasha.providers.mock import MockProvider
 from akasha.schemas import SyncRequest
@@ -47,6 +51,45 @@ def test_failed_idempotent_job_can_be_retried() -> None:
     assert first.job_id != second.job_id
     assert first.status == JobStatus.FAILED
     assert second.status == JobStatus.QUEUED
+
+
+def test_completed_in_memory_job_clears_previous_error() -> None:
+    store = InMemoryJobStore()
+    job, _created = store.create_or_get(
+        job_type="resourcesat_backfill",
+        idempotency_key="retry-completes",
+        source_id="resourcesat-2a-liss3-boa",
+        aoi_id="bangalore_60km_geodesic_aoi",
+        date_start="2026-01-13",
+        date_end="2026-07-10",
+    )
+    store.mark_failed(job, error="transient failure")
+    store.mark_running(job)
+
+    completed = store.mark_completed(job, result_metadata={"processed_count": 1})
+
+    assert completed.status == JobStatus.COMPLETED
+    assert completed.error is None
+
+
+def test_completed_postgres_job_clears_previous_error() -> None:
+    engine = _CompletedJobEngine()
+    store = PostgresJobStore(engine)  # type: ignore[arg-type]
+    job, _created = InMemoryJobStore().create_or_get(
+        job_type="resourcesat_backfill",
+        idempotency_key="postgres-retry-completes",
+        source_id="resourcesat-2a-liss3-boa",
+        aoi_id="bangalore_60km_geodesic_aoi",
+        date_start="2026-01-13",
+        date_end="2026-07-10",
+    )
+    job.error = "transient failure"
+
+    completed = store.mark_completed(job, result_metadata={"processed_count": 1})
+
+    assert "error_message = NULL" in engine.statement
+    assert completed.status == JobStatus.COMPLETED
+    assert completed.error is None
 
 
 def test_start_mock_sync_does_not_rewrite_status_after_dispatch(
@@ -121,3 +164,55 @@ def test_dispatch_failure_marks_job_failed_and_allows_retry(
     assert jobs[0].status == JobStatus.FAILED
     assert retry.status == JobStatus.QUEUED
     assert retry.job_id != jobs[0].job_id
+
+
+class _CompletedJobEngine:
+    def __init__(self) -> None:
+        self.statement = ""
+
+    def begin(self):
+        return _CompletedJobConnection(self)
+
+
+class _CompletedJobConnection:
+    def __init__(self, engine: _CompletedJobEngine) -> None:
+        self._engine = engine
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def execute(self, statement, _params):
+        self._engine.statement = str(statement)
+        now = datetime.now(UTC)
+        row = SimpleNamespace(
+            id="11111111-1111-4111-8111-111111111111",
+            job_type="resourcesat_backfill",
+            idempotency_key="postgres-retry-completes",
+            status="completed",
+            source_id="resourcesat-2a-liss3-boa",
+            aoi_id="bangalore_60km_geodesic_aoi",
+            request_params={
+                "date_start": "2026-01-13",
+                "date_end": "2026-07-10",
+            },
+            result_metadata={"processed_count": 1},
+            error_message=None,
+            created_at=now,
+            updated_at=now,
+            completed_at=now,
+        )
+        return _CompletedJobResult(row)
+
+
+class _CompletedJobResult:
+    def __init__(self, row) -> None:
+        self._row = row
+
+    def mappings(self):
+        return self
+
+    def one(self):
+        return self._row

@@ -148,6 +148,7 @@ class PostgresJobStore:
                     UPDATE akasha.processing_jobs
                     SET status = 'completed',
                         result_metadata = CAST(:result_metadata AS jsonb),
+                        error_message = NULL,
                         completed_at = now(),
                         updated_at = now()
                     WHERE id = CAST(:job_id AS uuid)
