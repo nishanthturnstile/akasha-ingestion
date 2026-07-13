@@ -82,6 +82,22 @@ def test_render_clipped_index_overlay_produces_png_and_corners() -> None:
     assert min(lats) <= 12.950 and max(lats) >= 12.960
 
 
+def test_render_clipped_index_overlay_accepts_file_backed_source(tmp_path) -> None:
+    cog_path = tmp_path / "ndvi.tif"
+    cog_path.write_bytes(_synthetic_ndvi_cog())
+
+    png, corners = render_clipped_index_overlay(
+        cog_path,
+        geometry=_FIELD_GEOMETRY,
+        index_name="NDVI",
+        scale_factor=10000,
+        nodata=0,
+    )
+
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert corners is not None
+
+
 def test_render_clipped_index_overlay_transparent_when_no_overlap() -> None:
     far_geometry = {
         "type": "Polygon",
@@ -221,3 +237,16 @@ def test_overlay_route_unknown_query_returns_404() -> None:
     )
 
     assert response.status_code == 404
+
+
+def test_overlay_route_missing_raster_returns_typed_not_found() -> None:
+    client, analytics, query_id = _build_overlay_client()
+    analytics._object_store._objects.clear()
+
+    response = client.get(
+        f"/api/v1/analytics/field-index/{query_id}/overlay.png"
+        f"?{_signed_overlay_query(analytics, query_id)}"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["message"] == "Raster output was not found."

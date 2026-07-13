@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from akasha.api.app import create_app
 from akasha.config import Environment, RuntimeBackend, Settings
 from akasha.security import hash_api_key
+from akasha.services.analytics import AnalyticsRasterUnavailable
 
 
 def test_field_index_requires_authentication() -> None:
@@ -99,6 +100,40 @@ def test_field_index_rejects_malformed_polygon_coordinates_with_error_envelope()
     assert body["success"] is False
     assert body["error"]["code"] == "422"
     assert "geometry coordinates are invalid" in body["error"]["message"]
+
+
+def test_field_index_raster_failure_returns_typed_service_unavailable() -> None:
+    api_key = "test-akasha-key"
+    app = create_app(
+        Settings(
+            environment=Environment.TEST,
+            runtime_backend=RuntimeBackend.MEMORY,
+            api_key_hashes=f"test:{hash_api_key(api_key)}",
+        )
+    )
+
+    class FailingAnalytics:
+        def field_index(self, _payload):
+            raise AnalyticsRasterUnavailable(
+                "Candidate raster outputs are temporarily unavailable."
+            )
+
+    app.state.analytics_service = FailingAnalytics()
+    response = TestClient(app).post(
+        "/api/v1/analytics/field-index",
+        headers={"X-API-Key": api_key},
+        json=_payload(),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "success": False,
+        "data": None,
+        "error": {
+            "code": "503",
+            "message": "Candidate raster outputs are temporarily unavailable.",
+        },
+    }
 
 
 def _payload() -> dict:

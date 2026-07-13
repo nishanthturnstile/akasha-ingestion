@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from hashlib import sha256
 from io import BytesIO
 from json import dumps, loads
@@ -281,6 +282,10 @@ class InMemoryObjectStore:
         if payload is None:
             raise ObjectStoreNotFoundError(object_path)
         return payload
+
+    def raster_source(self, object_path: str) -> bytes:
+        """Return byte-backed raster data for in-memory/test processing."""
+        return self.get_required(object_path)
 
     def exists(self, object_path: str) -> bool:
         with self._lock:
@@ -610,6 +615,22 @@ class MinIOObjectStore:
             if exc.code in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}:
                 raise ObjectStoreNotFoundError(object_path) from exc
             raise ObjectStoreReadError(f"failed to read object: {object_path}") from exc
+
+    def raster_source(self, object_path: str) -> str:
+        """Return a short-lived internal URL so GDAL can range-read a COG."""
+        try:
+            self._client.stat_object(self._bucket, object_path)
+            return self._client.presigned_get_object(
+                self._bucket,
+                object_path,
+                expires=timedelta(minutes=5),
+            )
+        except S3Error as exc:
+            if exc.code in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}:
+                raise ObjectStoreNotFoundError(object_path) from exc
+            raise ObjectStoreReadError(f"failed to sign raster object: {object_path}") from exc
+        except Exception as exc:
+            raise ObjectStoreReadError(f"failed to sign raster object: {object_path}") from exc
 
     def exists(self, object_path: str) -> bool:
         try:

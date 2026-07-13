@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from akasha.storage.object_store import InMemoryObjectStore, ObjectStoreNotFoundError, file_sha256
+from akasha.config import Settings
+from akasha.storage.object_store import (
+    InMemoryObjectStore,
+    MinIOObjectStore,
+    ObjectStoreNotFoundError,
+    file_sha256,
+)
 
 
 def test_memory_object_store_writes_stac_manifest_and_source_cog() -> None:
@@ -45,6 +51,36 @@ def test_memory_object_store_missing_required_object_raises() -> None:
 
     with pytest.raises(ObjectStoreNotFoundError):
         store.get_required("missing/object.tif")
+
+
+def test_minio_raster_source_returns_presigned_url_without_loading_object() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.stat_calls: list[tuple[str, str]] = []
+            self.sign_calls: list[tuple[str, str]] = []
+
+        def stat_object(self, bucket: str, object_path: str) -> object:
+            self.stat_calls.append((bucket, object_path))
+            return object()
+
+        def presigned_get_object(self, bucket: str, object_path: str, **_kwargs) -> str:
+            self.sign_calls.append((bucket, object_path))
+            return f"http://minio:9000/{bucket}/{object_path}?signed=true"
+
+        def get_object(self, *_args, **_kwargs):
+            raise AssertionError("raster_source must not load the full object")
+
+    store = MinIOObjectStore(Settings(minio_bucket="test-bucket"))
+    client = Client()
+    store._client = client  # type: ignore[assignment]
+
+    source = store.raster_source("indices/sentinel/scene/ndvi.cog.tif")
+
+    assert source == (
+        "http://minio:9000/test-bucket/indices/sentinel/scene/ndvi.cog.tif?signed=true"
+    )
+    assert client.stat_calls == [("test-bucket", "indices/sentinel/scene/ndvi.cog.tif")]
+    assert client.sign_calls == [("test-bucket", "indices/sentinel/scene/ndvi.cog.tif")]
 
 
 def test_memory_object_store_writes_raw_zip_and_prepared_cog_files(tmp_path: Path) -> None:
