@@ -4,6 +4,11 @@ Akasha Ingestion is the self-hosted satellite ingestion, metadata catalog, objec
 
 Phase 1 establishes the core platform foundation: FastAPI, Celery, Postgres/PostGIS/pgSTAC ownership, MinIO lake zones, mock-provider ingestion, TiTiler smoke integration, observability, backups, Docker Compose, Ansible, and CI.
 
+## Architecture documentation
+
+- [End-to-end satellite architecture](docs/akasha-end-to-end-satellite-architecture.md) — client-facing current and target architecture, all satellite integration paths, automatic processing, index calculation, and frontend serving.
+- [Architecture and technical stack](docs/architecture-technical-stack.md) — detailed platform decisions, deployment model, data architecture, and engineering constraints.
+
 ## Local development
 
 ```powershell
