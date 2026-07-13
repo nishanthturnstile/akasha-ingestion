@@ -5,6 +5,13 @@ Currently **Phase 1: core platform foundation** (FastAPI + Celery + Postgres/Pos
 See [README.md](README.md) and [docs/akasha-ingestion-plan.md](docs/akasha-ingestion-plan.md) for the
 what/why, and [docs/architecture-technical-stack.md](docs/architecture-technical-stack.md) for the full stack.
 
+## Required working branch
+
+- Always perform repository work on the `development` branch. Before editing, verify the current
+  branch and switch to `development` if necessary without discarding unrelated local changes.
+- Do not commit implementation work directly to `main`. Promote validated `development` changes
+  to `main` through the repository's normal pull-request and deployment workflow.
+
 ## Multi-root workspace context
 
 This repository is commonly opened in the saved VS Code workspace

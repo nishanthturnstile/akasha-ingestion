@@ -18,7 +18,7 @@ def create_celery_app() -> Celery:
     celery_app.conf.task_routes = {
         "akasha.jobs.tasks.mock_sync": {"queue": "download"},
         "akasha.jobs.sentinel2_tasks.scheduled_bangalore_preload": {"queue": "maintenance"},
-        "akasha.jobs.sentinel2_tasks.backfill": {"queue": "search"},
+        "akasha.jobs.sentinel2_tasks.backfill": {"queue": "heavy-cpu"},
         "akasha.jobs.resourcesat_tasks.scheduled_liss3_preload": {"queue": "maintenance"},
         "akasha.jobs.resourcesat_tasks.scheduled_resourcesat_sources": {"queue": "maintenance"},
         "akasha.jobs.resourcesat_tasks.backfill": {"queue": "heavy-cpu"},
@@ -51,6 +51,7 @@ def create_celery_app() -> Celery:
     if beat_schedule:
         celery_app.conf.beat_schedule = beat_schedule
     celery_app.conf.task_acks_late = True
+    celery_app.conf.task_reject_on_worker_lost = True
     celery_app.conf.worker_prefetch_multiplier = 1
     return celery_app
 

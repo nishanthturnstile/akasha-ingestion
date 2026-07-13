@@ -191,6 +191,65 @@ def test_sentinel2_mirror_assets_reuses_existing_mirrors(tmp_path) -> None:
     assert service._mirror_assets(_item(), [existing]) == [existing]
 
 
+def test_scene_failure_does_not_register_partial_index_outputs(tmp_path) -> None:
+    settings = Settings(
+        environment=Environment.TEST,
+        runtime_backend=RuntimeBackend.MEMORY,
+        task_always_eager=True,
+        scratch_dir=tmp_path,
+    )
+    object_store = _FailingDerivedObjectStore()
+    scene_repository = InMemorySceneRepository()
+    asset_repository = InMemorySceneAssetRepository()
+    raster_repository = InMemoryRasterRepository()
+    tile_layer_repository = InMemoryTileLayerRepository(
+        raster_repository=raster_repository,
+        scene_repository=scene_repository,
+    )
+    mirror = SourceMirroringService(
+        object_store=object_store,
+        settings=settings,
+        client=httpx.Client(transport=httpx.MockTransport(_asset_handler(_source_payloads()))),
+    )
+    service = Sentinel2IngestionService(
+        job_store=InMemoryJobStore(),
+        stage_store=InMemoryStageStore(),
+        aoi_repository=_AoiRepository(),
+        scene_repository=scene_repository,
+        asset_repository=asset_repository,
+        raster_repository=raster_repository,
+        object_store=object_store,
+        backfill_repository=InMemoryBackfillRepository(),
+        tile_layer_repository=tile_layer_repository,
+        provider=_Provider(_item()),
+        mirroring_service=mirror,
+        settings=settings,
+    )
+
+    job = service.start_backfill(
+        SyncRequest(
+            source_id="sentinel-2-l2a",
+            provider_route="earthsearch:sentinel-2-l2a",
+            aoi_id="bangalore_60km_geodesic_aoi",
+            date_start=date(2026, 1, 15),
+            date_end=date(2026, 1, 15),
+            job_type="sentinel2_backfill",
+            mode="full_pipeline",
+        )
+    )
+
+    scene_ids = [
+        scene.id
+        for scene in scene_repository.list_for_source_aoi(
+            source_id="sentinel-2-l2a",
+            aoi_id="bangalore_60km_geodesic_aoi",
+        )
+        if scene.id is not None
+    ]
+    assert job.result_metadata["backfill_summary"]["failed_count"] == 1
+    assert raster_repository.list_for_scene_ids(scene_ids) == []
+
+
 class _Provider:
     def __init__(self, item: NormalizedStacItem) -> None:
         self._item = item
@@ -221,6 +280,18 @@ class _PgstacRepository:
 class _FailingMirrorService:
     def mirror_asset(self, **_: object) -> object:
         raise AssertionError("already mirrored assets should not be downloaded again")
+
+
+class _FailingDerivedObjectStore(InMemoryObjectStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self._derived_calls = 0
+
+    def put_derived_cog(self, **kwargs):
+        self._derived_calls += 1
+        if self._derived_calls == 2:
+            raise RuntimeError("simulated derived COG upload failure")
+        return super().put_derived_cog(**kwargs)
 
 
 _MOCK_PNG = b"\x89PNG\r\n\x1a\n" + b"mock-tile-bytes" * 8

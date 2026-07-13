@@ -25,6 +25,13 @@ def test_celery_mock_task_is_registered() -> None:
     assert "akasha.jobs.sentinel2_tasks.backfill" in celery_app.tasks
 
 
+def test_sentinel2_backfill_routes_to_memory_bounded_heavy_worker() -> None:
+    route = celery_app.conf.task_routes["akasha.jobs.sentinel2_tasks.backfill"]
+
+    assert route["queue"] == "heavy-cpu"
+    assert celery_app.conf.task_reject_on_worker_lost is True
+
+
 def test_failed_idempotent_job_can_be_retried() -> None:
     store = InMemoryJobStore()
 

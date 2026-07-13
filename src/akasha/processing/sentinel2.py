@@ -111,10 +111,13 @@ def reflectance_from_dn(
     offset: float = 0.0,
     valid_mask: NDArray[np.bool_] | None = None,
 ) -> NDArray[np.float32]:
-    values = dn.astype("float32")
-    output = np.full(values.shape, np.nan, dtype="float32")
-    mask = np.isfinite(values) if valid_mask is None else valid_mask & np.isfinite(values)
-    output[mask] = values[mask] * scale + offset
+    output = dn.astype("float32")
+    finite = np.isfinite(output)
+    mask = finite if valid_mask is None else valid_mask & finite
+    np.multiply(output, scale, out=output, where=mask)
+    if offset:
+        np.add(output, offset, out=output, where=mask)
+    output[~mask] = np.nan
     return output
 
 

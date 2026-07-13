@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
-from akasha.config import get_settings
+from akasha.config import Settings, get_settings
 from akasha.jobs.celery_app import celery_app
 from akasha.runtime import (
     create_aoi_repository,
@@ -24,8 +24,7 @@ from akasha.services.sentinel2_ingestion import Sentinel2IngestionService
 @celery_app.task(name="akasha.jobs.sentinel2_tasks.scheduled_bangalore_preload")
 def scheduled_bangalore_preload() -> dict[str, str]:
     settings = get_settings()
-    end_date = datetime.now(UTC).date()
-    start_date = end_date - timedelta(days=settings.sentinel2_preload_date_window_days)
+    start_date, end_date = _scheduled_date_window(settings)
     service = _create_service()
     job = service.start_backfill(
         SyncRequest(
@@ -41,9 +40,23 @@ def scheduled_bangalore_preload() -> dict[str, str]:
     return {"job_id": job.job_id, "status": job.status.value}
 
 
-@celery_app.task(name="akasha.jobs.sentinel2_tasks.backfill")
-def backfill(job_id: str, mode: str = "metadata_only") -> dict[str, str]:
+def _scheduled_date_window(
+    settings: Settings,
+    *,
+    end_date: date | None = None,
+) -> tuple[date, date]:
+    """Return complete provider days for a periodic Sentinel-2 refresh."""
+    resolved_end = end_date or datetime.now(UTC).date() - timedelta(days=1)
+    lookback_days = settings.sentinel2_preload_refresh_days - 1
+    return resolved_end - timedelta(days=lookback_days), resolved_end
+
+
+@celery_app.task(bind=True, name="akasha.jobs.sentinel2_tasks.backfill")
+def backfill(task, job_id: str, mode: str = "metadata_only") -> dict[str, str]:
     service = _create_service()
+    delivery_info = getattr(task.request, "delivery_info", {}) or {}
+    if delivery_info.get("redelivered"):
+        service.recover_worker_lost(job_id)
     job = service.execute_backfill(job_id, mode=mode)
     return {"job_id": job.job_id, "status": job.status.value}
 

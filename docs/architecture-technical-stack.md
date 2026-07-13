@@ -1,5 +1,10 @@
 # Akasha Ingestion Architecture and Technical Stack
 
+> For a client-facing, code-grounded walkthrough of the current two-VM deployment, all 20 catalog
+> platforms, automatic ingestion/index processing, and product/frontend delivery, see
+> [Akasha End-to-End Satellite Architecture](akasha-end-to-end-satellite-architecture.md). This
+> technical-stack document remains the detailed source for platform decisions and evolution paths.
+
 ## 1. Executive summary
 
 Akasha Ingestion should be built as a modular, self-hosted satellite data ingestion lake, raster processing, metadata catalog, and tile/API serving platform. The MVP should run on a single Linux VM using Docker Compose, and the production architecture should remain self-hostable on-premises with a clear path to multiple VMs or a lightweight orchestrator when high availability is required.
