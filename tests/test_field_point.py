@@ -287,3 +287,83 @@ def test_point_route_returns_valid_pixel_value() -> None:
         "maskClass": None,
         "source": "sentinel-2-l2a",
     }
+
+
+def test_point_route_missing_raster_returns_typed_not_found() -> None:
+    client, analytics, query_id = _build_point_client()
+    analytics._object_store._objects.clear()
+
+    response = client.get(
+        f"/api/v1/analytics/field-index/{query_id}/point"
+        f"?{_signed_point_query(analytics, query_id)}"
+        f"&lng={_VALID_POINT['lng']}&lat={_VALID_POINT['lat']}"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["message"] == "Raster output was not found."
+
+
+def test_field_index_skips_missing_nearest_raster_for_valid_fallback() -> None:
+    settings = _settings()
+    object_store = InMemoryObjectStore()
+    raster_repository = InMemoryRasterRepository()
+    scene_repository = InMemorySceneRepository()
+    tile_layer_repository = InMemoryTileLayerRepository(
+        raster_repository=raster_repository,
+        scene_repository=scene_repository,
+    )
+    for scene_id, product_id, acquisition_at in (
+        ("scene-missing", "S2_MISSING", datetime(2026, 1, 15, tzinfo=UTC)),
+        ("scene-valid", "S2_VALID", datetime(2026, 1, 16, tzinfo=UTC)),
+    ):
+        scene_repository.upsert(
+            ProviderSceneRecord(
+                id=scene_id,
+                provider_adapter="earthsearch",
+                source_id="sentinel-2-l2a",
+                provider_product_id=product_id,
+                acquisition_at=acquisition_at,
+                cloud_percent=5.0,
+                provider_metadata={"provider_route": "earthsearch:sentinel-2-l2a"},
+            )
+        )
+        object_path = f"indices/earthsearch/sentinel-2-l2a/{product_id}/ndvi.cog.tif"
+        if scene_id == "scene-valid":
+            object_store.put_bytes(object_path, _synthetic_ndvi_cog())
+        raster_repository.upsert_derived_index(
+            RasterOutputRecord(
+                id=None,
+                scene_id=scene_id,
+                output_kind="derived_index",
+                index_name="ndvi",
+                object_path=object_path,
+                formula_version="ndvi-s2-v1",
+                processing_profile_version="sentinel2-l2a-earthsearch-v1",
+                processing_resolution=10.0,
+                scale_factor=10000,
+                nodata_value=_NODATA,
+                native_resolution=10.0,
+                display_resolution=10.0,
+                cloud_mask_version="scl-v1",
+            )
+        )
+    analytics = AnalyticsService(
+        field_query_repository=InMemoryFieldQueryRepository(),
+        scene_repository=scene_repository,
+        raster_repository=raster_repository,
+        tile_layer_repository=tile_layer_repository,
+        object_store=object_store,
+        profile_repository=None,
+        settings=settings,
+    )
+
+    result = analytics.field_index(
+        FieldIndexRequest(
+            geometry=_FIELD_GEOMETRY,
+            index="NDVI",
+            date=date(2026, 1, 15),
+        )
+    )
+
+    assert result.status == "AVAILABLE"
+    assert result.selectedSceneDate == date(2026, 1, 16)

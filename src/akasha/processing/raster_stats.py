@@ -10,11 +10,12 @@ from numpy.typing import NDArray
 from pyproj import CRS, Transformer
 from rasterio.errors import WindowError
 from rasterio.features import geometry_mask
-from rasterio.io import MemoryFile
 from rasterio.windows import Window, intersection
 from rasterio.windows import from_bounds as window_from_bounds
 from shapely.geometry import shape
 from shapely.ops import transform as shapely_transform
+
+from akasha.processing.raster_source import RasterSource, open_raster
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,8 +26,8 @@ class RasterBand:
     nodata: int | float | None
 
 
-def read_single_band(payload: bytes) -> RasterBand:
-    with MemoryFile(payload) as memory_file, memory_file.open() as dataset:
+def read_single_band(source: RasterSource) -> RasterBand:
+    with open_raster(source) as dataset:
         return RasterBand(
             values=dataset.read(1),
             transform=dataset.transform,
@@ -36,14 +37,14 @@ def read_single_band(payload: bytes) -> RasterBand:
 
 
 def raster_stats(
-    payload: bytes,
+    source: RasterSource,
     *,
     geometry: dict[str, Any],
     encoded_nodata: int | float | None,
     scale_factor: float | None,
     threshold_classes: list[dict[str, Any]],
 ) -> tuple[dict[str, float | int | None], list[dict[str, Any]]]:
-    with MemoryFile(payload) as memory_file, memory_file.open() as dataset:
+    with open_raster(source) as dataset:
         dataset_geometry = _geometry_for_dataset(dataset, geometry)
         # Read only the window covering the field polygon. Stats consider in-polygon
         # pixels only, so a windowed read is identical to a full read but far cheaper
@@ -78,7 +79,11 @@ def raster_stats(
         class_stats = _class_stats(
             selected,
             threshold_classes=threshold_classes,
-            pixel_area_sq_m=_pixel_area_sq_m(dataset, geometry),
+            pixel_area_sq_m=_pixel_area_sq_m(
+                dataset,
+                geometry,
+                field_pixel_count=int(field_mask.sum()),
+            ),
         )
         return stats, class_stats
 
@@ -165,7 +170,12 @@ def _class_stats(
     return results
 
 
-def _pixel_area_sq_m(dataset: rasterio.io.DatasetReader, geometry: dict[str, Any]) -> float:
+def _pixel_area_sq_m(
+    dataset: rasterio.io.DatasetReader,
+    geometry: dict[str, Any],
+    *,
+    field_pixel_count: int,
+) -> float:
     if dataset.crs and CRS.from_user_input(dataset.crs).is_projected:
         return abs(dataset.transform.a * dataset.transform.e)
     geom = shape(geometry)
@@ -174,19 +184,7 @@ def _pixel_area_sq_m(dataset: rasterio.io.DatasetReader, geometry: dict[str, Any
     epsg = 32600 + utm_zone if centroid.y >= 0 else 32700 + utm_zone
     transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
     projected = shapely_transform(transformer.transform, geom)
-    return projected.area / max(_estimated_field_pixels(dataset, geometry), 1)
-
-
-def _estimated_field_pixels(dataset: rasterio.io.DatasetReader, geometry: dict[str, Any]) -> int:
-    dataset_geometry = _geometry_for_dataset(dataset, geometry)
-    return int(
-        geometry_mask(
-            [dataset_geometry],
-            out_shape=(dataset.height, dataset.width),
-            transform=dataset.transform,
-            invert=True,
-        ).sum()
-    )
+    return projected.area / max(field_pixel_count, 1)
 
 
 def _geometry_for_dataset(

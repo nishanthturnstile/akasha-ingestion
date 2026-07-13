@@ -48,7 +48,11 @@ from akasha.schemas import (
     SyncRequest,
 )
 from akasha.security import require_api_key
-from akasha.services.analytics import AnalyticsService
+from akasha.services.analytics import (
+    AnalyticsRasterNotFound,
+    AnalyticsRasterUnavailable,
+    AnalyticsService,
+)
 from akasha.services.ingestion import MockIngestionService
 from akasha.services.readiness import ReadinessService
 from akasha.services.resourcesat_ingestion import ResourceSatIngestionService
@@ -308,6 +312,11 @@ def create_app(
         service_obj: AnalyticsService = request.app.state.analytics_service
         try:
             result = service_obj.field_index(payload)
+        except AnalyticsRasterUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -403,7 +412,15 @@ def create_app(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="invalid signature",
             )
-        payload = service_obj.point_for_query(query_id, lng, lat)
+        try:
+            payload = service_obj.point_for_query(query_id, lng, lat)
+        except AnalyticsRasterNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except AnalyticsRasterUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
         if payload is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="query not found")
         return APIResponse(success=True, data=payload)
@@ -491,7 +508,15 @@ def create_app(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="invalid signature",
             )
-        result = service_obj.overlay_for_query(query_id)
+        try:
+            result = service_obj.overlay_for_query(query_id)
+        except AnalyticsRasterNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except AnalyticsRasterUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
         if result is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="query not found")
         png_bytes, corners = result

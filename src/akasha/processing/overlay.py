@@ -23,13 +23,14 @@ from pyproj import CRS, Transformer
 from rasterio.enums import Resampling
 from rasterio.errors import WindowError
 from rasterio.features import rasterize
-from rasterio.io import MemoryFile
 from rasterio.transform import array_bounds, from_bounds
 from rasterio.warp import reproject, transform, transform_bounds, transform_geom
 from rasterio.windows import Window, intersection
 from rasterio.windows import from_bounds as window_from_bounds
 from shapely.geometry import shape
 from shapely.ops import transform as shapely_transform
+
+from akasha.processing.raster_source import RasterSource, open_raster
 
 # NDVI reference classes matching the app field-overlay legend (apps/api/app/raster/tiles.py).
 # (lower, upper, (r, g, b)).
@@ -116,7 +117,7 @@ def _geometry_for_crs(geometry: dict[str, Any], dst_crs: Any) -> Any:
 
 
 def render_clipped_index_overlay(
-    payload: bytes,
+    source: RasterSource,
     *,
     geometry: dict[str, Any],
     index_name: str,
@@ -136,7 +137,7 @@ def render_clipped_index_overlay(
     supersample = max(1, int(supersample))
     max_dim = max(1, int(max_dim))
 
-    with MemoryFile(payload) as memory_file, memory_file.open() as dataset:
+    with open_raster(source) as dataset:
         src_crs = dataset.crs
         geom_ds = _geometry_for_crs(geometry, src_crs)
         minx, miny, maxx, maxy = geom_ds.bounds

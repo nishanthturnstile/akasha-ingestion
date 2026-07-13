@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pyproj import Geod
+from rasterio.errors import RasterioError
 from shapely.errors import ShapelyError
 from shapely.geometry import Point, shape
 
@@ -11,6 +12,7 @@ from akasha.catalog.raster_repository import RasterOutputRecord
 from akasha.catalog.scene_repository import ProviderSceneRecord
 from akasha.catalog.tile_layer_repository import TileLayerRecord
 from akasha.config import Settings
+from akasha.processing.raster_source import RasterSource, open_raster
 from akasha.processing.raster_stats import raster_stats
 from akasha.processing.resourcesat import (
     RESOURCESAT_FORMULA_VERSION,
@@ -31,6 +33,15 @@ from akasha.schemas import (
     FieldIndexVisualization,
 )
 from akasha.services.signing import SigningService
+from akasha.storage.object_store import ObjectStoreNotFoundError, ObjectStoreReadError
+
+
+class AnalyticsRasterNotFound(FileNotFoundError):
+    pass
+
+
+class AnalyticsRasterUnavailable(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +101,7 @@ class AnalyticsService:
             key=lambda scene: _candidate_prefilter_key(scene, source_id, request.date),
         )
         options: list[_FieldIndexCandidate] = []
+        raster_failure_count = 0
         for scene in candidates:
             raster = self._raster_repository.get_for_scene_index(
                 scene_id=scene.id or "",
@@ -110,13 +122,17 @@ class AnalyticsService:
                 if self._profile_repository is not None
                 else None
             )
-            stats, class_stats = raster_stats(
-                self._object_store.get_required(raster.object_path),
-                geometry=request.geometry,
-                encoded_nodata=raster.nodata_value,
-                scale_factor=raster.scale_factor,
-                threshold_classes=threshold.classes_json if threshold else [],
-            )
+            try:
+                stats, class_stats = raster_stats(
+                    self._object_store.raster_source(raster.object_path),
+                    geometry=request.geometry,
+                    encoded_nodata=raster.nodata_value,
+                    scale_factor=raster.scale_factor,
+                    threshold_classes=threshold.classes_json if threshold else [],
+                )
+            except (ObjectStoreNotFoundError, ObjectStoreReadError, RasterioError):
+                raster_failure_count += 1
+                continue
             valid_pixels = int(stats.pop("validPixelCount", 0) or 0)
             usable_percentage = float(stats["usablePixelPercentage"] or 0.0)
             if valid_pixels < self._settings.field_min_usable_pixels:
@@ -284,6 +300,11 @@ class AnalyticsService:
                 ),
             )
 
+        if raster_failure_count:
+            raise AnalyticsRasterUnavailable(
+                "Candidate raster outputs are temporarily unavailable."
+            )
+
         return self._unavailable(
             request,
             (
@@ -335,14 +356,18 @@ class AnalyticsService:
         raster = self._raster_repository.get(record.raster_output_id)
         if raster is None:
             return None
-        payload = self._object_store.get_required(raster.object_path)
-        return render_clipped_index_overlay(
-            payload,
-            geometry=record.field_geometry,
-            index_name=record.index_name,
-            scale_factor=raster.scale_factor,
-            nodata=raster.nodata_value,
-        )
+        try:
+            return render_clipped_index_overlay(
+                self._object_store.raster_source(raster.object_path),
+                geometry=record.field_geometry,
+                index_name=record.index_name,
+                scale_factor=raster.scale_factor,
+                nodata=raster.nodata_value,
+            )
+        except ObjectStoreNotFoundError as exc:
+            raise AnalyticsRasterNotFound("Raster output was not found.") from exc
+        except (ObjectStoreReadError, RasterioError) as exc:
+            raise AnalyticsRasterUnavailable("Raster output is temporarily unavailable.") from exc
 
     def point_for_query(
         self,
@@ -359,15 +384,19 @@ class AnalyticsService:
         if raster is None:
             return None
 
-        payload = self._object_store.get_required(raster.object_path)
-        value, masked, mask_class = _sample_point(
-            payload,
-            geometry=record.field_geometry,
-            lng=lng,
-            lat=lat,
-            scale_factor=raster.scale_factor,
-            nodata=raster.nodata_value,
-        )
+        try:
+            value, masked, mask_class = _sample_point(
+                self._object_store.raster_source(raster.object_path),
+                geometry=record.field_geometry,
+                lng=lng,
+                lat=lat,
+                scale_factor=raster.scale_factor,
+                nodata=raster.nodata_value,
+            )
+        except ObjectStoreNotFoundError as exc:
+            raise AnalyticsRasterNotFound("Raster output was not found.") from exc
+        except (ObjectStoreReadError, RasterioError) as exc:
+            raise AnalyticsRasterUnavailable("Raster output is temporarily unavailable.") from exc
         return FieldIndexPointResponse(
             queryId=record.query_id,
             index=record.index_name.upper(),
@@ -552,7 +581,7 @@ _GEOD = Geod(ellps="WGS84")
 
 
 def _sample_point(
-    payload: bytes,
+    source: RasterSource,
     *,
     geometry: dict,
     lng: float,
@@ -562,14 +591,13 @@ def _sample_point(
 ) -> tuple[float | None, bool, int | None]:
     import numpy as np
     from pyproj import CRS, Transformer
-    from rasterio.io import MemoryFile
 
     field_geometry = shape(geometry)
     point = Point(lng, lat)
     if field_geometry.is_empty or not field_geometry.covers(point):
         return None, True, None
 
-    with MemoryFile(payload) as memory_file, memory_file.open() as dataset:
+    with open_raster(source) as dataset:
         x, y = lng, lat
         if dataset.crs is not None and CRS.from_user_input(dataset.crs) != CRS.from_epsg(4326):
             transformer = Transformer.from_crs("EPSG:4326", dataset.crs, always_xy=True)
