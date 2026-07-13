@@ -189,6 +189,20 @@ class Sentinel2IngestionService:
             self._job_store.mark_failed(job, error=str(exc))
             raise
 
+    def recover_worker_lost(self, job_id: str) -> None:
+        """Close an interrupted stage before Celery redelivers a worker-lost task."""
+        job = self._job_store.get(job_id)
+        if job is None:
+            raise ValueError(f"job not found: {job_id}")
+        for stage in self._stage_store.list_for_job(job_id):
+            if stage.status.value == "running":
+                self._stage_store.mark_failed(
+                    stage.stage_id,
+                    error_code="worker_lost",
+                    error_message="Celery redelivered the task after its worker process exited.",
+                )
+        self._job_store.mark_queued(job)
+
     def _process_items(
         self,
         *,
@@ -357,7 +371,7 @@ class Sentinel2IngestionService:
     ) -> int:
         assets_by_key = {record.asset_key or "": record for record in assets}
         scl = self._source_band(assets_by_key["scl"])
-        output_records: list[RasterOutputRecord] = []
+        pending_outputs: list[RasterOutputRecord] = []
         for index_name, (first_key, second_key) in SENTINEL2_INDEX_ASSETS.items():
             first_asset = item.assets[first_key]
             second_asset = item.assets[second_key]
@@ -370,17 +384,21 @@ class Sentinel2IngestionService:
                 & np.isfinite(second_values)
                 & scl_valid_mask(scl_values)
             )
+            output_transform = first.transform
+            output_crs = first.crs
             values = calculate_index(
                 index_name,
-                first.values.astype("float32"),
-                second_values.astype("float32"),
+                first.values,
+                second_values,
                 valid_mask=valid_mask,
             )
+            del first, second, second_values, scl_values, valid_mask
             encoded, profile = encode_index_output(index_name, values)
+            del values
             payload = write_cog_bytes(
                 encoded,
-                transform=first.transform,
-                crs=first.crs,
+                transform=output_transform,
+                crs=output_crs,
                 nodata=profile.nodata_value,
                 tags={
                     "akasha:formula_version": profile.formula_version,
@@ -388,6 +406,13 @@ class Sentinel2IngestionService:
                     "akasha:source_item_id": item.stac_item_id,
                 },
             )
+            metadata = cog_metadata(
+                encoded,
+                crs=output_crs,
+                resolution=profile.processing_resolution,
+                nodata=profile.nodata_value,
+            )
+            del encoded
             object_path, checksum = self._object_store.put_derived_cog(
                 provider=item.provider_adapter,
                 source_id=item.source_id,
@@ -400,13 +425,8 @@ class Sentinel2IngestionService:
                     "index-name": index_name,
                 },
             )
-            metadata = cog_metadata(
-                encoded,
-                crs=first.crs,
-                resolution=profile.processing_resolution,
-                nodata=profile.nodata_value,
-            )
-            output = self._raster_repository.upsert_derived_index(
+            del payload
+            pending_outputs.append(
                 RasterOutputRecord(
                     id=None,
                     scene_id=scene.id or "",
@@ -424,7 +444,7 @@ class Sentinel2IngestionService:
                     native_resolution=profile.processing_resolution,
                     processing_resolution=profile.processing_resolution,
                     display_resolution=profile.processing_resolution,
-                    crs=first.crs,
+                    crs=output_crs,
                     cloud_mask_version="scl-v1",
                     metadata={
                         "pgstac_collection": "akasha-sentinel-2-l2a-derived-v1",
@@ -433,13 +453,17 @@ class Sentinel2IngestionService:
                     },
                 )
             )
+
+        output_records: list[RasterOutputRecord] = []
+        for pending_output in pending_outputs:
+            output = self._raster_repository.upsert_derived_index(pending_output)
             output_records.append(output)
             self._tile_layer_repository.upsert_for_raster(
                 TileLayerRecord(
                     layer_id=None,
                     raster_output_id=output.id or "",
                     visibility="private",
-                    metadata={"index_name": index_name, "scene_id": scene.id},
+                    metadata={"index_name": output.index_name, "scene_id": scene.id},
                 )
             )
 
