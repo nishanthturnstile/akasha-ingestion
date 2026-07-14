@@ -21,6 +21,9 @@ from akasha.processing.resourcesat import (
 )
 from akasha.processing.sentinel2 import SENTINEL2_FORMULA_VERSION, SENTINEL2_INDEX_ASSETS
 from akasha.schemas import (
+    FieldDateAvailability,
+    FieldDatesRequest,
+    FieldDatesResponse,
     FieldIndexAvailableResponse,
     FieldIndexPointResponse,
     FieldIndexQuality,
@@ -90,67 +93,10 @@ class AnalyticsService:
             )
 
         window_days = _field_index_window_days(source_id, self._settings)
-        candidates = sorted(
-            self._scene_repository.list_candidates(
-                source_id=source_id,
-                requested_date=request.date,
-                window_days=window_days,
-                max_cloud_percentage=request.maxCloudPercentage,
-                limit=self._settings.max_candidate_scenes,
-            ),
-            key=lambda scene: _candidate_prefilter_key(scene, source_id, request.date),
+        options, raster_failure_count = self._candidate_options(
+            request,
+            window_days=window_days,
         )
-        options: list[_FieldIndexCandidate] = []
-        raster_failure_count = 0
-        for scene in candidates:
-            raster = self._raster_repository.get_for_scene_index(
-                scene_id=scene.id or "",
-                index_name=index_name,
-            )
-            if raster is None:
-                continue
-            threshold = (
-                self._profile_repository.get_default_threshold(
-                    index_name,
-                    source_id=source_id,
-                )
-                if self._profile_repository is not None
-                else None
-            )
-            visualization = (
-                self._profile_repository.get_default_visualization(index_name)
-                if self._profile_repository is not None
-                else None
-            )
-            try:
-                stats, class_stats = raster_stats(
-                    self._object_store.raster_source(raster.object_path),
-                    geometry=request.geometry,
-                    encoded_nodata=raster.nodata_value,
-                    scale_factor=raster.scale_factor,
-                    threshold_classes=threshold.classes_json if threshold else [],
-                )
-            except (ObjectStoreNotFoundError, ObjectStoreReadError, RasterioError):
-                raster_failure_count += 1
-                continue
-            valid_pixels = int(stats.pop("validPixelCount", 0) or 0)
-            usable_percentage = float(stats["usablePixelPercentage"] or 0.0)
-            if valid_pixels < self._settings.field_min_usable_pixels:
-                continue
-            if usable_percentage / 100 < self._settings.field_usable_pixel_threshold:
-                continue
-            options.append(
-                _FieldIndexCandidate(
-                    scene=scene,
-                    raster=raster,
-                    stats=stats,
-                    class_stats=class_stats,
-                    valid_pixels=valid_pixels,
-                    usable_pixel_percentage=usable_percentage,
-                    threshold=threshold,
-                    visualization=visualization,
-                )
-            )
 
         if options:
             selected = min(options, key=lambda option: _candidate_quality_key(option, request.date))
@@ -312,6 +258,144 @@ class AnalyticsService:
                 f"+/- {window_days} days"
             ),
         )
+
+    def field_dates(self, request: FieldDatesRequest) -> FieldDatesResponse:
+        self._validate_geometry_limits(request)
+        self._validate_source_index(request.sourceId, request.index.lower())
+        if not self._has_available_dependencies():
+            raise AnalyticsRasterUnavailable(
+                "Field-date selection dependencies are not configured."
+            )
+
+        results: list[FieldDateAvailability] = []
+        for acquisition_date in sorted(request.dates, reverse=True):
+            candidate_request = FieldIndexRequest(
+                geometry=request.geometry,
+                sourceId=request.sourceId,
+                crs=request.crs,
+                index=request.index,
+                date=acquisition_date,
+                maxCloudPercentage=request.maxCloudPercentage,
+            )
+            options, raster_failure_count = self._candidate_options(
+                candidate_request,
+                window_days=0,
+            )
+            if options:
+                selected = min(
+                    options,
+                    key=lambda option: _candidate_quality_key(option, acquisition_date),
+                )
+                results.append(
+                    FieldDateAvailability(
+                        acquisitionDate=acquisition_date,
+                        available=True,
+                        selectedSceneDate=(
+                            selected.scene.acquisition_at.date()
+                            if selected.scene.acquisition_at
+                            else acquisition_date
+                        ),
+                        usablePixelPercentage=selected.usable_pixel_percentage,
+                        cloudPercentage=selected.scene.cloud_percent,
+                        validPixelCount=selected.valid_pixels,
+                    )
+                )
+                continue
+            if raster_failure_count:
+                raise AnalyticsRasterUnavailable(
+                    "Candidate raster outputs are temporarily unavailable."
+                )
+            results.append(
+                FieldDateAvailability(
+                    acquisitionDate=acquisition_date,
+                    available=False,
+                    reason="No exact-date scene satisfies field quality thresholds.",
+                )
+            )
+
+        return FieldDatesResponse(
+            sourceId=request.sourceId,
+            index=request.index,
+            dates=results,
+        )
+
+    def _candidate_options(
+        self,
+        request: FieldIndexRequest,
+        *,
+        window_days: int,
+    ) -> tuple[list[_FieldIndexCandidate], int]:
+        source_id = request.sourceId
+        index_name = request.index.lower()
+        max_cloud_percentage = min(
+            request.maxCloudPercentage,
+            self._settings.field_max_cloud_percentage,
+        )
+        candidates = sorted(
+            self._scene_repository.list_candidates(
+                source_id=source_id,
+                requested_date=request.date,
+                window_days=window_days,
+                max_cloud_percentage=max_cloud_percentage,
+                limit=self._settings.max_candidate_scenes,
+            ),
+            key=lambda scene: _candidate_prefilter_key(scene, source_id, request.date),
+        )
+        options: list[_FieldIndexCandidate] = []
+        raster_failure_count = 0
+        for scene in candidates:
+            if scene.cloud_percent is None or scene.cloud_percent > max_cloud_percentage:
+                continue
+            raster = self._raster_repository.get_for_scene_index(
+                scene_id=scene.id or "",
+                index_name=index_name,
+            )
+            if raster is None:
+                continue
+            threshold = (
+                self._profile_repository.get_default_threshold(
+                    index_name,
+                    source_id=source_id,
+                )
+                if self._profile_repository is not None
+                else None
+            )
+            visualization = (
+                self._profile_repository.get_default_visualization(index_name)
+                if self._profile_repository is not None
+                else None
+            )
+            try:
+                stats, class_stats = raster_stats(
+                    self._object_store.raster_source(raster.object_path),
+                    geometry=request.geometry,
+                    encoded_nodata=raster.nodata_value,
+                    scale_factor=raster.scale_factor,
+                    threshold_classes=threshold.classes_json if threshold else [],
+                )
+            except (ObjectStoreNotFoundError, ObjectStoreReadError, RasterioError):
+                raster_failure_count += 1
+                continue
+            valid_pixels = int(stats.pop("validPixelCount", 0) or 0)
+            usable_percentage = float(stats["usablePixelPercentage"] or 0.0)
+            if valid_pixels < self._settings.field_min_usable_pixels:
+                continue
+            if usable_percentage / 100 < self._settings.field_usable_pixel_threshold:
+                continue
+            options.append(
+                _FieldIndexCandidate(
+                    scene=scene,
+                    raster=raster,
+                    stats=stats,
+                    class_stats=class_stats,
+                    valid_pixels=valid_pixels,
+                    usable_pixel_percentage=usable_percentage,
+                    threshold=threshold,
+                    visualization=visualization,
+                )
+            )
+
+        return options, raster_failure_count
 
     def _validate_source_index(self, source_id: str, index_name: str) -> None:
         if source_id == self._settings.sentinel2_preload_source_id:
