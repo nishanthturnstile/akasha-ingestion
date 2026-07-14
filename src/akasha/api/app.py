@@ -39,6 +39,8 @@ from akasha.schemas import (
     AnalyticsReadinessResponse,
     APIResponse,
     ErrorPayload,
+    FieldDatesRequest,
+    FieldDatesResponse,
     FieldIndexPointResponse,
     FieldIndexRequest,
     FieldIndexResponse,
@@ -312,6 +314,31 @@ def create_app(
         service_obj: AnalyticsService = request.app.state.analytics_service
         try:
             result = service_obj.field_index(payload)
+        except AnalyticsRasterUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+        return APIResponse(success=True, data=result)
+
+    @app.post(
+        "/api/v1/analytics/field-dates",
+        response_model=APIResponse[FieldDatesResponse],
+        dependencies=[auth_dependency],
+        responses=API_ERROR_RESPONSES | VALIDATION_ERROR_RESPONSE,
+    )
+    def field_dates(
+        request: Request,
+        payload: FieldDatesRequest,
+    ) -> APIResponse[FieldDatesResponse]:
+        service_obj: AnalyticsService = request.app.state.analytics_service
+        try:
+            result = service_obj.field_dates(payload)
         except AnalyticsRasterUnavailable as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

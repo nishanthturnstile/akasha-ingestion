@@ -10,6 +10,8 @@ from akasha.jobs.store import Job
 from akasha.processing.resourcesat import RESOURCESAT_SOURCE_COLLECTIONS, RESOURCESAT_SOURCE_IDS
 
 T = TypeVar("T")
+FIELD_DATES_MAX_DATES = 64
+FIELD_DATES_MAX_CLOUD_PERCENTAGE = 20.0
 
 
 class ErrorPayload(BaseModel):
@@ -154,6 +156,73 @@ class FieldIndexRequest(BaseModel):
         if not isinstance(coordinates, list) or not coordinates:
             raise ValueError("geometry coordinates are required")
         return self
+
+
+class FieldDatesRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    geometry: dict[str, Any]
+    sourceId: str = Field(default="sentinel-2-l2a", min_length=1)
+    crs: Literal["EPSG:4326"] = "EPSG:4326"
+    index: Literal["NDVI", "MSAVI", "NDMI", "NDBI", "NDRE", "RECI", "NDWI_GREEN_NIR"]
+    dates: list[date] = Field(min_length=1, max_length=FIELD_DATES_MAX_DATES)
+    maxCloudPercentage: float = Field(
+        default=FIELD_DATES_MAX_CLOUD_PERCENTAGE,
+        ge=0,
+        le=FIELD_DATES_MAX_CLOUD_PERCENTAGE,
+    )
+
+    @model_validator(mode="after")
+    def validate_request(self) -> Self:
+        geometry_type = self.geometry.get("type")
+        if geometry_type not in {"Polygon", "MultiPolygon"}:
+            raise ValueError("geometry must be a Polygon or MultiPolygon")
+        coordinates = self.geometry.get("coordinates")
+        if not isinstance(coordinates, list) or not coordinates:
+            raise ValueError("geometry coordinates are required")
+        if len(set(self.dates)) != len(self.dates):
+            raise ValueError("dates must be unique")
+        return self
+
+
+class FieldDateAvailability(BaseModel):
+    acquisitionDate: date
+    available: bool
+    selectedSceneDate: date | None = None
+    usablePixelPercentage: float | None = Field(default=None, ge=0, le=100)
+    cloudPercentage: float | None = Field(
+        default=None,
+        ge=0,
+        le=FIELD_DATES_MAX_CLOUD_PERCENTAGE,
+    )
+    validPixelCount: int = Field(default=0, ge=0)
+    reason: str | None = None
+
+    @model_validator(mode="after")
+    def validate_availability(self) -> Self:
+        if self.available:
+            if self.selectedSceneDate != self.acquisitionDate:
+                raise ValueError("available field dates must select the exact acquisition date")
+            if self.usablePixelPercentage is None or self.validPixelCount <= 0:
+                raise ValueError("available field dates require usable pixels")
+            if self.cloudPercentage is None:
+                raise ValueError("available field dates require cloud percentage")
+            if self.reason is not None:
+                raise ValueError("available field dates cannot include an unavailable reason")
+            return self
+        if self.selectedSceneDate is not None or self.usablePixelPercentage is not None:
+            raise ValueError("unavailable field dates cannot include selected-scene metrics")
+        if self.cloudPercentage is not None or self.validPixelCount != 0:
+            raise ValueError("unavailable field dates cannot include raster metrics")
+        if not self.reason or not self.reason.strip():
+            raise ValueError("unavailable field dates require a reason")
+        return self
+
+
+class FieldDatesResponse(BaseModel):
+    sourceId: str
+    index: str
+    dates: list[FieldDateAvailability]
 
 
 class FieldIndexUnavailableResponse(BaseModel):
