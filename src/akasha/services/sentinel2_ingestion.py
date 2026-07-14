@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import numpy as np
 from rasterio.enums import Resampling
@@ -15,7 +15,7 @@ from akasha.catalog.scene_repository import ProviderSceneRecord
 from akasha.catalog.tile_layer_repository import TileLayerRecord
 from akasha.config import RuntimeBackend, Settings
 from akasha.jobs.idempotency import compute_backfill_idempotency_key
-from akasha.jobs.store import Job
+from akasha.jobs.store import Job, JobStatus
 from akasha.processing.cog import cog_metadata, write_cog_bytes
 from akasha.processing.indices import calculate_index, encode_index_output
 from akasha.processing.raster_stats import RasterBand, read_single_band
@@ -104,6 +104,35 @@ class Sentinel2IngestionService:
             else EarthSearchProvider(settings)
         )
         self._mirroring_service = mirroring_service
+
+    def latest_processed_acquisition_date(
+        self,
+        *,
+        source_id: str,
+        aoi_id: str,
+    ) -> date | None:
+        scenes = self._scene_repository.list_for_source_aoi(
+            source_id=source_id,
+            aoi_id=aoi_id,
+        )
+        for scene in reversed(scenes):
+            if (
+                scene.acquisition_at is not None
+                and scene.cloud_percent is not None
+                and scene.cloud_percent <= self._settings.field_max_cloud_percentage
+                and self._scene_is_complete(scene)
+            ):
+                return scene.acquisition_at.date()
+        return None
+
+    def has_active_backfill(self, *, source_id: str, aoi_id: str) -> bool:
+        return any(
+            job.job_type == "sentinel2_backfill"
+            and job.source_id == source_id
+            and job.aoi_id == aoi_id
+            and job.status in {JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING}
+            for job in self._job_store.list()
+        )
 
     def start_backfill(self, request: SyncRequest) -> Job:
         if request.provider_route is None:
@@ -223,10 +252,29 @@ class Sentinel2IngestionService:
 
         for item in items:
             try:
+                if (
+                    item.cloud_percent is None
+                    or item.cloud_percent > self._settings.field_max_cloud_percentage
+                ):
+                    skipped += 1
+                    continue
                 validate_required_assets(item)
                 accepted += 1
                 stac_item_ids.append(item.stac_item_id)
                 logical_scene_keys.append(item.logical_scene_key)
+                existing_scene = self._scene_repository.get_by_provider_product(
+                    provider_adapter=item.provider_adapter,
+                    provider_product_id=item.stac_item_id,
+                )
+                if existing_scene is not None and self._scene_is_complete(existing_scene):
+                    skipped += 1
+                    continue
+                if existing_scene is not None:
+                    existing_outputs = self._complete_scene_outputs(existing_scene)
+                    if existing_outputs is not None:
+                        self._publish_scene(existing_scene, item, existing_outputs)
+                        skipped += 1
+                        continue
                 scene = self._register_scene(job, item)
                 self._store_manifests(item)
                 asset_records = self._register_assets(scene, item)
@@ -264,6 +312,24 @@ class Sentinel2IngestionService:
             mirror_checksums=mirror_checksums,
             failed_items=failed_items,
         )
+
+    def _scene_is_complete(self, scene: ProviderSceneRecord) -> bool:
+        outputs = self._complete_scene_outputs(scene)
+        if outputs is None:
+            return False
+        return self._pgstac_repository is None or scene.pgstac_item_id is not None
+
+    def _complete_scene_outputs(
+        self,
+        scene: ProviderSceneRecord,
+    ) -> list[RasterOutputRecord] | None:
+        if scene.id is None:
+            return None
+        outputs = self._raster_repository.list_for_scene_ids([scene.id])
+        by_index = {output.index_name: output for output in outputs}
+        if not all(index_name in by_index for index_name in SENTINEL2_INDEX_ASSETS):
+            return None
+        return [by_index[index_name] for index_name in SENTINEL2_INDEX_ASSETS]
 
     def _register_scene(self, job: Job, item: NormalizedStacItem) -> ProviderSceneRecord:
         scene = ProviderSceneRecord(
@@ -467,17 +533,26 @@ class Sentinel2IngestionService:
                 )
             )
 
-        if self._pgstac_repository is not None and scene.scene_geometry:
-            item_json = build_derived_item(
-                scene=scene,
-                outputs=output_records,
-                bbox=item.bbox,
-                geometry=scene.scene_geometry,
-            )
-            self._pgstac_repository.upsert_item_json(item_json)
-            scene.pgstac_item_id = item_json.id
-            self._scene_repository.upsert(scene)
+        self._publish_scene(scene, item, output_records)
         return len(output_records)
+
+    def _publish_scene(
+        self,
+        scene: ProviderSceneRecord,
+        item: NormalizedStacItem,
+        outputs: list[RasterOutputRecord],
+    ) -> None:
+        if self._pgstac_repository is None or not scene.scene_geometry:
+            return
+        item_json = build_derived_item(
+            scene=scene,
+            outputs=outputs,
+            bbox=item.bbox,
+            geometry=scene.scene_geometry,
+        )
+        self._pgstac_repository.upsert_item_json(item_json)
+        scene.pgstac_item_id = item_json.id
+        self._scene_repository.upsert(scene)
 
     def _source_band(self, asset: SceneAssetRecord) -> RasterBand:
         if asset.mirror_object_path is None:
