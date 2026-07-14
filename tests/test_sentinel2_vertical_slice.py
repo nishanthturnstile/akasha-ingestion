@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from urllib.parse import urlparse
 
@@ -102,6 +103,65 @@ def test_offline_sentinel2_vertical_slice_returns_available_and_signed_urls(tmp_
     assert summary["processed_count"] == 6
     assert summary["failed_count"] == 0
     assert len(pgstac_repository.items) == 1
+
+    published_scene = scene_repository.list_for_source_aoi(
+        source_id="sentinel-2-l2a",
+        aoi_id="bangalore_60km_geodesic_aoi",
+    )[0]
+    published_scene.pgstac_item_id = None
+    scene_repository.upsert(published_scene)
+    pgstac_repository.items.clear()
+
+    duplicate = service.start_backfill(
+        SyncRequest(
+            source_id="sentinel-2-l2a",
+            provider_route="earthsearch:sentinel-2-l2a",
+            aoi_id="bangalore_60km_geodesic_aoi",
+            date_start=date(2026, 1, 2),
+            date_end=date(2026, 2, 1),
+            job_type="sentinel2_backfill",
+            mode="full_pipeline",
+        )
+    )
+    duplicate_summary = duplicate.result_metadata["backfill_summary"]
+    assert duplicate.job_id != job.job_id
+    assert duplicate_summary["searched_count"] == 1
+    assert duplicate_summary["accepted_count"] == 1
+    assert duplicate_summary["mirrored_asset_count"] == 0
+    assert duplicate_summary["processed_count"] == 0
+    assert duplicate_summary["skipped_count"] == 1
+    assert len(pgstac_repository.items) == 1
+    assert scene_repository.list_for_source_aoi(
+        source_id="sentinel-2-l2a",
+        aoi_id="bangalore_60km_geodesic_aoi",
+    )[0].pgstac_item_id is not None
+
+    provider._item = replace(
+        _item(),
+        stac_item_id="S2A_CLOUDY_001",
+        logical_scene_key="sentinel-2-l2a:S2A_CLOUDY_001",
+        cloud_percent=35.0,
+    )
+    cloudy = service.start_backfill(
+        SyncRequest(
+            source_id="sentinel-2-l2a",
+            provider_route="earthsearch:sentinel-2-l2a",
+            aoi_id="bangalore_60km_geodesic_aoi",
+            date_start=date(2026, 1, 3),
+            date_end=date(2026, 2, 2),
+            job_type="sentinel2_backfill",
+            mode="full_pipeline",
+        )
+    )
+    cloudy_summary = cloudy.result_metadata["backfill_summary"]
+    assert cloudy_summary["searched_count"] == 1
+    assert cloudy_summary["accepted_count"] == 0
+    assert cloudy_summary["processed_count"] == 0
+    assert cloudy_summary["skipped_count"] == 1
+    assert len(scene_repository.list_for_source_aoi(
+        source_id="sentinel-2-l2a",
+        aoi_id="bangalore_60km_geodesic_aoi",
+    )) == 1
 
     analytics = AnalyticsService(
         field_query_repository=field_query_repository,

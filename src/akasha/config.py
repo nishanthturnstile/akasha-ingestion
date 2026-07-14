@@ -170,8 +170,10 @@ class Settings(BaseSettings):
     )
     sentinel2_preload_date_window_days: int = Field(default=180, gt=0)
     sentinel2_preload_refresh_days: int = Field(default=7, gt=0)
+    sentinel2_revisit_days: int = Field(default=5, gt=0)
     sentinel2_preload_freshness_max_age_hours: int = Field(default=168, gt=0)
     sentinel2_preload_schedule_enabled: bool = True
+    # Deprecated compatibility input. Daily discovery now uses only the configured UTC time.
     sentinel2_preload_schedule_day_of_week: str = "mon"
     sentinel2_preload_schedule_hour_utc: int = Field(default=2, ge=0, le=23)
     sentinel2_preload_schedule_minute_utc: int = Field(default=30, ge=0, le=59)

@@ -31,12 +31,11 @@ def create_celery_app() -> Celery:
     }
     beat_schedule = {}
     if settings.sentinel2_preload_schedule_enabled:
-        beat_schedule["sentinel2-bangalore-preload-weekly"] = {
+        beat_schedule["sentinel2-bangalore-preload-daily"] = {
             "task": "akasha.jobs.sentinel2_tasks.scheduled_bangalore_preload",
             "schedule": crontab(
                 minute=settings.sentinel2_preload_schedule_minute_utc,
                 hour=settings.sentinel2_preload_schedule_hour_utc,
-                day_of_week=settings.sentinel2_preload_schedule_day_of_week,
             ),
         }
     if (

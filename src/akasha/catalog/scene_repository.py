@@ -51,6 +51,14 @@ class InMemorySceneRepository:
     def get(self, scene_id: str) -> ProviderSceneRecord | None:
         return next((scene for scene in self._scenes.values() if scene.id == scene_id), None)
 
+    def get_by_provider_product(
+        self,
+        *,
+        provider_adapter: str,
+        provider_product_id: str,
+    ) -> ProviderSceneRecord | None:
+        return self._scenes.get((provider_adapter, provider_product_id))
+
     def list_for_source_aoi(self, *, source_id: str, aoi_id: str) -> list[ProviderSceneRecord]:
         scenes = [
             scene
@@ -181,6 +189,29 @@ class DatabaseSceneRepository:
                     """
                 ),
                 {"scene_id": scene_id},
+            ).mappings().first()
+        return _row_to_scene(row) if row else None
+
+    def get_by_provider_product(
+        self,
+        *,
+        provider_adapter: str,
+        provider_product_id: str,
+    ) -> ProviderSceneRecord | None:
+        with self._engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """
+                    SELECT *, ST_AsGeoJSON(scene_geometry)::json AS scene_geometry_geojson
+                    FROM akasha.provider_scenes
+                    WHERE provider_adapter = :provider_adapter
+                      AND provider_product_id = :provider_product_id
+                    """
+                ),
+                {
+                    "provider_adapter": provider_adapter,
+                    "provider_product_id": provider_product_id,
+                },
             ).mappings().first()
         return _row_to_scene(row) if row else None
 

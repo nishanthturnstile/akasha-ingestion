@@ -24,8 +24,22 @@ from akasha.services.sentinel2_ingestion import Sentinel2IngestionService
 @celery_app.task(name="akasha.jobs.sentinel2_tasks.scheduled_bangalore_preload")
 def scheduled_bangalore_preload() -> dict[str, str]:
     settings = get_settings()
-    start_date, end_date = _scheduled_date_window(settings)
     service = _create_service()
+    if service.has_active_backfill(
+        source_id=settings.sentinel2_preload_source_id,
+        aoi_id=settings.sentinel2_preload_aoi_id,
+    ):
+        return {"job_id": "", "status": "active"}
+    date_window = _scheduled_date_window(
+        settings,
+        latest_processed_date=service.latest_processed_acquisition_date(
+            source_id=settings.sentinel2_preload_source_id,
+            aoi_id=settings.sentinel2_preload_aoi_id,
+        ),
+    )
+    if date_window is None:
+        return {"job_id": "", "status": "not_due"}
+    start_date, end_date = date_window
     job = service.start_backfill(
         SyncRequest(
             source_id=settings.sentinel2_preload_source_id,
@@ -44,9 +58,17 @@ def _scheduled_date_window(
     settings: Settings,
     *,
     end_date: date | None = None,
-) -> tuple[date, date]:
-    """Return complete provider days for a periodic Sentinel-2 refresh."""
+    latest_processed_date: date | None = None,
+) -> tuple[date, date] | None:
+    """Return complete provider days from the outstanding expected pass onward."""
     resolved_end = end_date or datetime.now(UTC).date() - timedelta(days=1)
+    if latest_processed_date is not None:
+        outstanding_start = latest_processed_date + timedelta(
+            days=settings.sentinel2_revisit_days
+        )
+        if outstanding_start > resolved_end:
+            return None
+        return outstanding_start, resolved_end
     lookback_days = settings.sentinel2_preload_refresh_days - 1
     return resolved_end - timedelta(days=lookback_days), resolved_end
 
