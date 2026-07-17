@@ -39,6 +39,9 @@ def test_resourcesat_settings_defaults_are_safe_and_gated() -> None:
     assert settings.resourcesat_liss3_composite_min_coverage_percent == 95.0
     assert settings.resourcesat_liss4_composite_min_coverage_percent == 10.0
     assert settings.resourcesat_awifs_composite_min_coverage_percent == 60.0
+    assert settings.resourcesat_liss3_max_downloads_per_run == 1
+    assert settings.resourcesat_liss4_max_downloads_per_run == 1
+    assert settings.resourcesat_awifs_max_downloads_per_run == 1
 
 
 def test_custom_resourcesat_settings_accept_constructor_values(tmp_path: Path) -> None:
@@ -50,6 +53,9 @@ def test_custom_resourcesat_settings_accept_constructor_values(tmp_path: Path) -
         resourcesat_approved_data_root=tmp_path,
         resourcesat_liss3_preload_schedule_enabled=True,
         resourcesat_liss3_processing_resolution_m=23.5,
+        resourcesat_liss3_max_downloads_per_run=7,
+        resourcesat_liss4_max_downloads_per_run=2,
+        resourcesat_awifs_max_downloads_per_run=6,
         resourcesat_liss3_composite_min_coverage_percent=90.0,
     )
 
@@ -60,6 +66,15 @@ def test_custom_resourcesat_settings_accept_constructor_values(tmp_path: Path) -
     assert settings.resourcesat_approved_data_root == tmp_path
     assert settings.resourcesat_liss3_preload_schedule_enabled is True
     assert settings.resourcesat_liss3_processing_resolution_m == 23.5
+    assert settings.resourcesat_max_downloads_for_source(
+        settings.resourcesat_liss3_preload_source_id
+    ) == 7
+    assert settings.resourcesat_max_downloads_for_source(
+        settings.resourcesat_liss4_preload_source_id
+    ) == 2
+    assert settings.resourcesat_max_downloads_for_source(
+        settings.resourcesat_awifs_preload_source_id
+    ) == 6
     assert settings.resourcesat_liss3_composite_min_coverage_percent == 90.0
 
 
@@ -162,6 +177,18 @@ def test_staging_compose_wires_safe_bounded_resourcesat_runtime() -> None:
         "${AKASHA_BHOONIDHI_MAX_DOWNLOADS_PER_RUN:-7}" in compose
     )
     assert (
+        "AKASHA_RESOURCESAT_LISS3_MAX_DOWNLOADS_PER_RUN: "
+        "${AKASHA_RESOURCESAT_LISS3_MAX_DOWNLOADS_PER_RUN:-7}" in compose
+    )
+    assert (
+        "AKASHA_RESOURCESAT_LISS4_MAX_DOWNLOADS_PER_RUN: "
+        "${AKASHA_RESOURCESAT_LISS4_MAX_DOWNLOADS_PER_RUN:-2}" in compose
+    )
+    assert (
+        "AKASHA_RESOURCESAT_AWIFS_MAX_DOWNLOADS_PER_RUN: "
+        "${AKASHA_RESOURCESAT_AWIFS_MAX_DOWNLOADS_PER_RUN:-7}" in compose
+    )
+    assert (
         "AKASHA_SOURCE_MIRROR_REQUIRED_HEADROOM_BYTES: "
         "${AKASHA_SOURCE_MIRROR_REQUIRED_HEADROOM_BYTES:-21474836480}" in compose
     )
@@ -192,6 +219,7 @@ def test_base_compose_propagates_every_resourcesat_source_contract() -> None:
             "PRELOAD_DATE_WINDOW_DAYS",
             "PRELOAD_REFRESH_DAYS",
             "PRELOAD_FRESHNESS_MAX_AGE_HOURS",
+            "MAX_DOWNLOADS_PER_RUN",
             "PRELOAD_SCHEDULE_ENABLED",
             "READINESS_ENABLED",
             "READINESS_REQUIRED_INDICES",

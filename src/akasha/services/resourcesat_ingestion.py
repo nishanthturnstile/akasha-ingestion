@@ -356,7 +356,7 @@ class ResourceSatIngestionService:
                     candidate.acquisition_at or datetime.min.replace(tzinfo=UTC),
                 ),
                 reverse=True,
-            )[: self._settings.bhoonidhi_max_downloads_per_run]
+            )[: self._settings.resourcesat_max_downloads_for_source(job.source_id)]
             summary.searched_count = len(candidates)
             summary.selected_count = len(selected)
             summary.product_ids = [candidate.provider_product_id for candidate in selected]

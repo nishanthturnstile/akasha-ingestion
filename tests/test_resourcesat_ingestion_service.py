@@ -63,6 +63,29 @@ def test_resourcesat_selection_prioritizes_aoi_overlap_before_recency(
     assert job.result_metadata["backfill_summary"]["product_ids"] == ["OLDER_COVERING"]
 
 
+def test_resourcesat_selection_uses_source_specific_download_cap(tmp_path: Path) -> None:
+    service = _service(
+        tmp_path,
+        settings=Settings(
+            environment=Environment.TEST,
+            runtime_backend=RuntimeBackend.MEMORY,
+            task_always_eager=True,
+            scratch_dir=tmp_path,
+            bhoonidhi_max_downloads_per_run=1,
+            resourcesat_liss3_max_downloads_per_run=2,
+        ),
+        candidates=[
+            _candidate("FIRST", overlap_area=0.75),
+            _candidate("SECOND", overlap_area=0.50),
+            _candidate("THIRD", overlap_area=0.25),
+        ],
+    )
+
+    job = service.start_backfill(_request(mode="metadata_only"))
+
+    assert job.result_metadata["backfill_summary"]["product_ids"] == ["FIRST", "SECOND"]
+
+
 def test_resourcesat_download_only_uploads_raw_zip_and_is_idempotent(tmp_path: Path) -> None:
     object_store = InMemoryObjectStore()
     service = _service(

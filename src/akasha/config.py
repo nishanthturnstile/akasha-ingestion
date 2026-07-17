@@ -101,6 +101,7 @@ class Settings(BaseSettings):
     resourcesat_liss3_preload_date_window_days: int = Field(default=30, gt=0)
     resourcesat_liss3_preload_refresh_days: int = Field(default=14, gt=0)
     resourcesat_liss3_preload_freshness_max_age_hours: int = Field(default=336, gt=0)
+    resourcesat_liss3_max_downloads_per_run: int = Field(default=1, gt=0)
     resourcesat_liss3_preload_schedule_enabled: bool = False
     resourcesat_liss3_preload_schedule_day_of_week: str = "tue"
     resourcesat_liss3_preload_schedule_hour_utc: int = Field(default=3, ge=0, le=23)
@@ -122,6 +123,7 @@ class Settings(BaseSettings):
     resourcesat_liss4_preload_date_window_days: int = Field(default=365, gt=0)
     resourcesat_liss4_preload_refresh_days: int = Field(default=14, gt=0)
     resourcesat_liss4_preload_freshness_max_age_hours: int = Field(default=336, gt=0)
+    resourcesat_liss4_max_downloads_per_run: int = Field(default=1, gt=0)
     resourcesat_liss4_preload_schedule_enabled: bool = False
     resourcesat_liss4_preload_schedule_day_of_week: str = "wed"
     resourcesat_liss4_preload_schedule_hour_utc: int = Field(default=3, ge=0, le=23)
@@ -143,6 +145,7 @@ class Settings(BaseSettings):
     resourcesat_awifs_preload_date_window_days: int = Field(default=365, gt=0)
     resourcesat_awifs_preload_refresh_days: int = Field(default=14, gt=0)
     resourcesat_awifs_preload_freshness_max_age_hours: int = Field(default=336, gt=0)
+    resourcesat_awifs_max_downloads_per_run: int = Field(default=1, gt=0)
     resourcesat_awifs_preload_schedule_enabled: bool = False
     resourcesat_awifs_preload_schedule_day_of_week: str = "thu"
     resourcesat_awifs_preload_schedule_hour_utc: int = Field(default=4, ge=0, le=23)
@@ -241,6 +244,15 @@ class Settings(BaseSettings):
         if value == "":
             return None
         return value
+
+    def resourcesat_max_downloads_for_source(self, source_id: str) -> int:
+        """Return the memory-safe scene cap configured for a ResourceSat source."""
+        caps = {
+            self.resourcesat_liss3_preload_source_id: self.resourcesat_liss3_max_downloads_per_run,
+            self.resourcesat_liss4_preload_source_id: self.resourcesat_liss4_max_downloads_per_run,
+            self.resourcesat_awifs_preload_source_id: self.resourcesat_awifs_max_downloads_per_run,
+        }
+        return caps.get(source_id, self.bhoonidhi_max_downloads_per_run)
 
 
 _DEFAULT_RESOURCESAT_APPROVED_ROOT = Path("/srv/akasha")
