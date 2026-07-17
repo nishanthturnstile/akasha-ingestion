@@ -34,8 +34,8 @@ def test_static_seed_uses_earthsearch_sentinel2_primary_metadata() -> None:
     sentinel2 = next(source for source in sources if source.source_id == "sentinel-2-l2a")
 
     assert sentinel2.provider_adapter == "earthsearch"
-    assert sentinel2.schedule_state == "manual-only"
-    assert sentinel2.product_exposure == "internal_qa"
+    assert sentinel2.schedule_state == "scheduled"
+    assert sentinel2.product_exposure == "public"
     assert sentinel2.supported_indices == ["ndvi", "msavi", "ndmi", "ndbi", "ndre", "reci"]
 
 

@@ -27,7 +27,7 @@ def test_resourcesat_seed_supported_indices_are_exact() -> None:
         assert sources_by_id[source_id].supported_indices == expected_indices
 
 
-def test_resourcesat_seed_metadata_is_bhoonidhi_gated_and_hidden() -> None:
+def test_resourcesat_seed_metadata_is_bhoonidhi_scheduled_and_public() -> None:
     sources_by_id = _seed_sources_by_id()
 
     for source_id, (instrument_mode, analysis_level) in RESOURCESAT_METADATA.items():
@@ -36,8 +36,8 @@ def test_resourcesat_seed_metadata_is_bhoonidhi_gated_and_hidden() -> None:
         assert source.provider_adapter == "bhoonidhi"
         assert source.instrument_mode == instrument_mode
         assert source.analysis_level == analysis_level
-        assert source.schedule_state == "disabled"
-        assert source.product_exposure == "hidden"
+        assert source.schedule_state == "scheduled"
+        assert source.product_exposure == "public"
 
 
 def test_removed_indices_do_not_appear_in_resourcesat_seed_rows() -> None:

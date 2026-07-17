@@ -31,7 +31,7 @@ env:
 jobs:
   build-images:
     name: Build and push ${{ matrix.image }}
-    if: github.repository == 'Akasha-TechCatalyst/akasha-ingestion' && (github.event_name != 'workflow_dispatch' || inputs.image_sha == '')
+    if: github.repository == 'nishanthturnstile/akasha-ingestion' && (github.event_name != 'workflow_dispatch' || inputs.image_sha == '')
     runs-on: [self-hosted, linux, x64, akasha-control]
     strategy:
       fail-fast: false
@@ -71,7 +71,7 @@ jobs:
 
   deploy-staging:
     name: Deploy or roll back akasha-staging
-    if: always() && github.repository == 'Akasha-TechCatalyst/akasha-ingestion' && (needs.build-images.result == 'success' || needs.build-images.result == 'skipped')
+    if: always() && github.repository == 'nishanthturnstile/akasha-ingestion' && (needs.build-images.result == 'success' || needs.build-images.result == 'skipped')
     needs: build-images
     runs-on: [self-hosted, linux, x64, akasha-control]
     env:
@@ -186,22 +186,27 @@ jobs:
       - name: Validate rendered Compose has no runtime builds
         run: |
           set -euo pipefail
+          printf '%s\n' "$AKASHA_STAGING_ENV_FILE" > .deploy-render/staging.env
+          chmod 600 .deploy-render/staging.env
           export AKASHA_API_IMAGE="${REGISTRY}/${IMAGE_NAMESPACE}/akasha-ingestion-api:${IMAGE_TAG}"
           export AKASHA_WORKER_IMAGE="${REGISTRY}/${IMAGE_NAMESPACE}/akasha-ingestion-worker:${IMAGE_TAG}"
           docker compose \
             --profile tools \
+            --env-file .deploy-render/staging.env \
             -f deploy/docker-compose.yml \
             -f deploy/compose.prod.yml \
             -f deploy/compose.staging.yml \
             config --quiet
           docker compose \
             --profile tools \
+            --env-file .deploy-render/staging.env \
             -f deploy/docker-compose.yml \
             -f deploy/compose.prod.yml \
             -f deploy/compose.staging.yml \
             config --format json | python3 .deploy-render/render_compose.py .deploy-render/docker-compose.rendered.json
           docker compose -f .deploy-render/docker-compose.rendered.json config --quiet
           python3 -c 'import json, sys; data=json.load(open(".deploy-render/docker-compose.rendered.json", encoding="utf-8")); runtime={"api","migrate","seed","scheduler","worker-search","worker-download","worker-process","worker-heavy"}; offenders=[name for name, svc in data.get("services", {}).items() if name in runtime and svc.get("build")]; print("Runtime services still have build entries: "+", ".join(offenders)) if offenders else None; sys.exit(1 if offenders else 0)'
+          python3 src/akasha/deployment/four_source_config.py .deploy-render/docker-compose.rendered.json
 
       - name: Upload Compose and env bundle to akasha-staging
         run: |
@@ -211,6 +216,7 @@ jobs:
           ssh ${SSH_OPTS} "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}" "mkdir -p '${DEPLOY_BASE_DIR}/deploy'"
           tar -C deploy -czf - . | ssh ${SSH_OPTS} "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}" "tar -xzf - -C '${DEPLOY_BASE_DIR}/deploy'"
           scp ${SCP_OPTS} .deploy-render/render_compose.py "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}:${DEPLOY_BASE_DIR}/deploy/render_compose.py"
+          scp ${SCP_OPTS} src/akasha/deployment/four_source_config.py "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}:${DEPLOY_BASE_DIR}/deploy/validate_four_source_config.py"
           printf '%s\n' "$AKASHA_STAGING_ENV_FILE" | ssh ${SSH_OPTS} "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}" "umask 077; cat > '${DEPLOY_BASE_DIR}/deploy/.env'"
           CADDY_BIND_HOST="${AKASHA_STAGING_CADDY_BIND%:*}"
           CADDY_BIND_PORT="${AKASHA_STAGING_CADDY_BIND##*:}"
@@ -239,6 +245,7 @@ jobs:
           COMPOSE="docker compose --project-name ${PROJECT_NAME} --profile tools --env-file .env -f docker-compose.rendered.json"
           ${COMPOSE} config --quiet
           python3 -c 'import json, sys; data=json.load(open("docker-compose.rendered.json", encoding="utf-8")); runtime={"api","migrate","seed","scheduler","worker-search","worker-download","worker-process","worker-heavy"}; offenders=[name for name, svc in data.get("services", {}).items() if name in runtime and svc.get("build")]; print("Runtime services still have build entries: "+", ".join(offenders)) if offenders else None; sys.exit(1 if offenders else 0)'
+          python3 validate_four_source_config.py docker-compose.rendered.json
           ${COMPOSE} pull api migrate seed scheduler worker-search worker-download worker-process worker-heavy caddy postgres redis minio titiler
           ${COMPOSE} stop api scheduler worker-search worker-download worker-process worker-heavy || true
           ${COMPOSE} run --interactive=false -T --rm pgstac-migrate

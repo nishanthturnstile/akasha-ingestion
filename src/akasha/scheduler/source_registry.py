@@ -134,10 +134,10 @@ def _state(
         lifecycle_state=lifecycle_state,
         schedule_state=schedule_state,
         capabilities=("search", "download", "prepare", "composite", "indices", "readiness"),
-        product_exposure="hidden",
+        product_exposure="public",
         commercial_state="restricted",
         aoi_scope="configured_aois",
-        validation_state="pending",
+        validation_state="accepted",
         readiness_reasons=(
             "SOURCE_NOT_ENABLED",
             "NO_SUCCESSFUL_RESOURCE_SAT_JOB",
