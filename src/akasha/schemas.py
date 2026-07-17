@@ -195,6 +195,9 @@ class FieldDateAvailability(BaseModel):
         ge=0,
         le=FIELD_DATES_MAX_CLOUD_PERCENTAGE,
     )
+    fieldCoveragePercentage: float | None = Field(default=None, ge=0, le=100)
+    shadowPercentage: float | None = Field(default=None, ge=0, le=100)
+    obscuredPercentage: float | None = Field(default=None, ge=0, le=100)
     validPixelCount: int = Field(default=0, ge=0)
     reason: str | None = None
 
@@ -205,14 +208,28 @@ class FieldDateAvailability(BaseModel):
                 raise ValueError("available field dates must select the exact acquisition date")
             if self.usablePixelPercentage is None or self.validPixelCount <= 0:
                 raise ValueError("available field dates require usable pixels")
-            if self.cloudPercentage is None:
-                raise ValueError("available field dates require cloud percentage")
+            if any(
+                value is None
+                for value in (
+                    self.cloudPercentage,
+                    self.fieldCoveragePercentage,
+                    self.shadowPercentage,
+                    self.obscuredPercentage,
+                )
+            ):
+                raise ValueError("available field dates require field quality percentages")
             if self.reason is not None:
                 raise ValueError("available field dates cannot include an unavailable reason")
             return self
         if self.selectedSceneDate is not None or self.usablePixelPercentage is not None:
             raise ValueError("unavailable field dates cannot include selected-scene metrics")
-        if self.cloudPercentage is not None or self.validPixelCount != 0:
+        quality_values = (
+            self.cloudPercentage,
+            self.fieldCoveragePercentage,
+            self.shadowPercentage,
+            self.obscuredPercentage,
+        )
+        if any(value is not None for value in quality_values) or self.validPixelCount != 0:
             raise ValueError("unavailable field dates cannot include raster metrics")
         if not self.reason or not self.reason.strip():
             raise ValueError("unavailable field dates require a reason")
@@ -247,6 +264,9 @@ class FieldIndexStatistics(BaseModel):
     stdDev: float | None
     usablePixelPercentage: float
     cloudPercentage: float | None
+    fieldCoveragePercentage: float | None = None
+    shadowPercentage: float | None = None
+    obscuredPercentage: float | None = None
 
 
 class FieldIndexSelection(BaseModel):

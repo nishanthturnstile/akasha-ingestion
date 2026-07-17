@@ -88,6 +88,71 @@ def raster_stats(
         return stats, class_stats
 
 
+def categorical_mask_stats(
+    source: RasterSource,
+    *,
+    geometry: dict[str, Any],
+    nodata_classes: tuple[int, ...],
+    usable_classes: tuple[int, ...],
+    cloud_classes: tuple[int, ...],
+    shadow_classes: tuple[int, ...],
+) -> dict[str, float | int]:
+    """Compute independent field coverage and quality percentages from a mask COG."""
+
+    with open_raster(source) as dataset:
+        dataset_geometry = _geometry_for_dataset(dataset, geometry)
+        window = _polygon_window(dataset, dataset_geometry)
+        if window is None:
+            return _empty_mask_stats()
+        values = dataset.read(1, window=window)
+        field_mask = geometry_mask(
+            [dataset_geometry],
+            out_shape=values.shape,
+            transform=dataset.window_transform(window),
+            invert=True,
+        )
+        field_pixels = int(field_mask.sum())
+        if field_pixels == 0:
+            return _empty_mask_stats()
+
+        covered = field_mask & ~np.isin(values, np.asarray(nodata_classes))
+        usable = field_mask & np.isin(values, np.asarray(usable_classes))
+        cloud = field_mask & np.isin(values, np.asarray(cloud_classes))
+        shadow = field_mask & np.isin(values, np.asarray(shadow_classes))
+        obscured = cloud | shadow
+        return {
+            "fieldPixelCount": field_pixels,
+            "coveredPixelCount": int(covered.sum()),
+            "usablePixelCount": int(usable.sum()),
+            "cloudPixelCount": int(cloud.sum()),
+            "shadowPixelCount": int(shadow.sum()),
+            "fieldCoveragePercentage": _percentage(covered.sum(), field_pixels),
+            "usablePixelPercentage": _percentage(usable.sum(), field_pixels),
+            "cloudPercentage": _percentage(cloud.sum(), field_pixels),
+            "shadowPercentage": _percentage(shadow.sum(), field_pixels),
+            "obscuredPercentage": _percentage(obscured.sum(), field_pixels),
+        }
+
+
+def _empty_mask_stats() -> dict[str, float | int]:
+    return {
+        "fieldPixelCount": 0,
+        "coveredPixelCount": 0,
+        "usablePixelCount": 0,
+        "cloudPixelCount": 0,
+        "shadowPixelCount": 0,
+        "fieldCoveragePercentage": 0.0,
+        "usablePixelPercentage": 0.0,
+        "cloudPercentage": 0.0,
+        "shadowPercentage": 0.0,
+        "obscuredPercentage": 0.0,
+    }
+
+
+def _percentage(numerator: Any, denominator: int) -> float:
+    return (float(numerator) / denominator) * 100 if denominator else 0.0
+
+
 def _polygon_window(dataset: rasterio.io.DatasetReader, dataset_geometry: dict[str, Any]):
     """Return the pixel window fully covering the polygon, clamped to the dataset.
 

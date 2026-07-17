@@ -129,7 +129,7 @@ def test_resourcesat_field_index_prefers_higher_coverage_candidate() -> None:
     assert response.json()["data"]["statistics"]["mean"] == pytest.approx(0.65)
 
 
-def test_resourcesat_liss4_partial_coverage_returns_warning() -> None:
+def test_resourcesat_liss4_global_aoi_coverage_does_not_warn_for_covered_field() -> None:
     client, _analytics = _client_with_scene(
         source_id=RESOURCESAT_LISS4_MX70_L2_SOURCE_ID,
         product_id="RS_LISS4_001",
@@ -146,8 +146,8 @@ def test_resourcesat_liss4_partial_coverage_returns_warning() -> None:
 
     assert response.status_code == 200
     quality = response.json()["data"]["quality"]
-    assert quality["status"] == "WARN"
-    assert any("LISS-4" in warning for warning in quality["warnings"])
+    assert quality["status"] == "GOOD"
+    assert quality["warnings"] == []
 
 
 def test_resourcesat_awifs_coarse_resolution_returns_warning() -> None:
@@ -303,6 +303,8 @@ def _seed_scene_and_raster(
     )
     object_path = f"indices/bhoonidhi/{source_id}/{product_id}/ndvi.cog.tif"
     harness.object_store.put_bytes(object_path, _synthetic_index_cog(value))
+    mask_path = f"indices/bhoonidhi/{source_id}/{product_id}/mask.tif"
+    harness.object_store.put_bytes(mask_path, _synthetic_resourcesat_mask_cog())
     harness.raster_repository.upsert_derived_index(
         RasterOutputRecord(
             id=None,
@@ -318,6 +320,7 @@ def _seed_scene_and_raster(
             native_resolution=profile.native_resolution_m,
             display_resolution=profile.native_resolution_m,
             cloud_mask_version=RESOURCESAT_MASK_METHOD,
+            metadata={"mask_object_path": mask_path},
         )
     )
 
@@ -336,6 +339,24 @@ def _synthetic_index_cog(value: int) -> bytes:
             crs="EPSG:4326",
             transform=transform,
             nodata=NODATA,
+        ) as dataset:
+            dataset.write(data, 1)
+        return mem.read()
+
+
+def _synthetic_resourcesat_mask_cog() -> bytes:
+    transform = from_bounds(*COG_BOUNDS, width=4, height=4)
+    data = np.full((4, 4), 1, dtype="uint8")
+    with MemoryFile() as mem:
+        with mem.open(
+            driver="GTiff",
+            height=4,
+            width=4,
+            count=1,
+            dtype="uint8",
+            crs="EPSG:4326",
+            transform=transform,
+            nodata=0,
         ) as dataset:
             dataset.write(data, 1)
         return mem.read()

@@ -521,21 +521,26 @@ class ResourceSatIngestionService:
                 ProviderErrorCategory.PREPARE_FAILED,
                 "No prepared ResourceSat scenes are available for compositing",
             )
+        exact_date, exact_date_paths = _latest_exact_date_manifests(manifest_paths)
         composite_key = compute_resourcesat_composite_idempotency_key(
             source_id=job.source_id,
             aoi_id=job.aoi_id,
-            composite_date=job.date_end,
-            product_ids=_manifest_product_ids(manifest_paths),
+            composite_date=exact_date.isoformat(),
+            product_ids=_manifest_product_ids(exact_date_paths),
             request_params_version=self._settings.request_params_version,
             processing_profile_version=profile.processing_profile_version,
         )
         with self._stage(
             job,
             "composite",
-            {"prepared_count": len(manifest_paths), "idempotency_key": composite_key},
+            {
+                "prepared_count": len(exact_date_paths),
+                "acquisition_date": exact_date.isoformat(),
+                "idempotency_key": composite_key,
+            },
         ) as stage:
             composite = self._build_composite(
-                manifest_paths=list(manifest_paths),
+                manifest_paths=list(exact_date_paths),
                 aoi=aoi,
                 output_root=self._composite_root(job),
                 settings=self._settings,
@@ -976,6 +981,23 @@ def _manifest_product_ids(manifest_paths: Sequence[Path]) -> list[str]:
         if product_id:
             product_ids.append(str(product_id))
     return product_ids
+
+
+def _latest_exact_date_manifests(
+    manifest_paths: Sequence[Path],
+) -> tuple[date, list[Path]]:
+    dated_paths: list[tuple[date, Path]] = []
+    for manifest_path in manifest_paths:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        raw_datetime = manifest.get("acquisition_datetime")
+        if not raw_datetime:
+            raise ValueError(f"ResourceSat manifest has no acquisition datetime: {manifest_path}")
+        acquisition_date = datetime.fromisoformat(str(raw_datetime).replace("Z", "+00:00")).date()
+        dated_paths.append((acquisition_date, manifest_path))
+    latest_date = max(item[0] for item in dated_paths)
+    return latest_date, [
+        path for acquisition_date, path in dated_paths if acquisition_date == latest_date
+    ]
 
 
 def _safe_component(value: str) -> str:

@@ -155,13 +155,13 @@ def test_offline_sentinel2_vertical_slice_returns_available_and_signed_urls(tmp_
     )
     cloudy_summary = cloudy.result_metadata["backfill_summary"]
     assert cloudy_summary["searched_count"] == 1
-    assert cloudy_summary["accepted_count"] == 0
-    assert cloudy_summary["processed_count"] == 0
-    assert cloudy_summary["skipped_count"] == 1
+    assert cloudy_summary["accepted_count"] == 1
+    assert cloudy_summary["processed_count"] == 6
+    assert cloudy_summary["skipped_count"] == 0
     assert len(scene_repository.list_for_source_aoi(
         source_id="sentinel-2-l2a",
         aoi_id="bangalore_60km_geodesic_aoi",
-    )) == 1
+    )) == 2
 
     analytics = AnalyticsService(
         field_query_repository=field_query_repository,

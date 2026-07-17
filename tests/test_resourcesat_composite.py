@@ -132,7 +132,7 @@ def test_build_resource_sat_composite_writes_manifest_and_verifies(tmp_path: Pat
     assert verify.problems == []
 
 
-def test_verify_resource_sat_composite_rejects_low_liss3_coverage(tmp_path: Path) -> None:
+def test_verify_resource_sat_composite_records_low_liss3_coverage_warning(tmp_path: Path) -> None:
     settings = Settings(resourcesat_liss3_processing_resolution_m=24.0)
     scene = _prepared_scene(
         tmp_path,
@@ -144,14 +144,17 @@ def test_verify_resource_sat_composite_rejects_low_liss3_coverage(tmp_path: Path
         transform=from_origin(799992, 1290000, 24, 24),
     )
 
-    with pytest.raises(ValueError, match="coverage"):
-        build_resource_sat_composite(
-            manifest_paths=[scene],
-            aoi=_aoi(),
-            output_root=tmp_path / "composites",
-            settings=settings,
-            dry_run=True,
-        )
+    result = build_resource_sat_composite(
+        manifest_paths=[scene],
+        aoi=_aoi(),
+        output_root=tmp_path / "composites",
+        settings=settings,
+        dry_run=True,
+    )
+
+    assert result.manifest["metrics"]["coverage_percent"] == 25.0
+    assert "coverage_below_threshold" in result.manifest["warnings"]
+    assert verify_resource_sat_composite(result.manifest_path, settings=settings).ok is True
 
 
 def test_build_resource_sat_composite_rejects_wrong_scene_aoi(tmp_path: Path) -> None:

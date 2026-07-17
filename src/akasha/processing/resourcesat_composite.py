@@ -468,7 +468,6 @@ def verify_resource_sat_composite(
         manifest = _read_manifest(manifest_path)
         _verify_manifest_fields(manifest, checks, problems)
         profile = profile_for_source(str(manifest.get("source_id") or ""))
-        policy = composite_policy(profile, settings)
         analytic_path = _resolve_manifest_path(manifest_path, manifest, "analytic")
         mask_path = _resolve_manifest_path(manifest_path, manifest, "mask")
         recomputed_coverage: float | None = None
@@ -521,10 +520,9 @@ def verify_resource_sat_composite(
                     f"mask usable coverage {recomputed_usable:.2f}%"
                 )
             coverage = recomputed_coverage if recomputed_coverage is not None else coverage
-            if coverage < policy.min_coverage_percent:
+            if coverage <= 0:
                 problems.append(
-                    f"coverage {coverage:.2f}% below threshold "
-                    f"{policy.min_coverage_percent:.2f}%"
+                    "composite has no covered pixels inside the configured AOI"
                 )
         else:
             problems.append("metrics missing or invalid")

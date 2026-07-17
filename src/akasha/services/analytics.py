@@ -13,7 +13,7 @@ from akasha.catalog.scene_repository import ProviderSceneRecord
 from akasha.catalog.tile_layer_repository import TileLayerRecord
 from akasha.config import Settings
 from akasha.processing.raster_source import RasterSource, open_raster
-from akasha.processing.raster_stats import raster_stats
+from akasha.processing.raster_stats import categorical_mask_stats, raster_stats
 from akasha.processing.resourcesat import (
     RESOURCESAT_FORMULA_VERSION,
     RESOURCESAT_MASK_METHOD,
@@ -56,6 +56,9 @@ class _FieldIndexCandidate:
     valid_pixels: int
     usable_pixel_percentage: float
     cloud_percentage: float
+    field_coverage_percentage: float
+    shadow_percentage: float
+    obscured_percentage: float
     threshold: object | None
     visualization: object | None
 
@@ -68,6 +71,7 @@ class AnalyticsService:
         settings: Settings,
         scene_repository=None,
         raster_repository=None,
+        asset_repository=None,
         tile_layer_repository=None,
         object_store=None,
         profile_repository=None,
@@ -77,6 +81,7 @@ class AnalyticsService:
         self._settings = settings
         self._scene_repository = scene_repository
         self._raster_repository = raster_repository
+        self._asset_repository = asset_repository
         self._tile_layer_repository = tile_layer_repository
         self._object_store = object_store
         self._profile_repository = profile_repository
@@ -108,7 +113,7 @@ class AnalyticsService:
             threshold = selected.threshold
             visualization = selected.visualization
             valid_pixels = selected.valid_pixels
-            warnings = _quality_warnings(source_id, scene)
+            warnings = _quality_warnings(source_id)
             quality_status = "WARN" if warnings else "GOOD"
             quality_reason = (
                 "Field usable pixels satisfy threshold with source-specific warnings"
@@ -223,6 +228,9 @@ class AnalyticsService:
                     stdDev=stats["stdDev"],
                     usablePixelPercentage=float(stats["usablePixelPercentage"] or 0.0),
                     cloudPercentage=selected.cloud_percentage,
+                    fieldCoveragePercentage=selected.field_coverage_percentage,
+                    shadowPercentage=selected.shadow_percentage,
+                    obscuredPercentage=selected.obscured_percentage,
                 ),
                 classStatistics=class_stats,
                 visualization=FieldIndexVisualization(
@@ -298,6 +306,9 @@ class AnalyticsService:
                         ),
                         usablePixelPercentage=selected.usable_pixel_percentage,
                         cloudPercentage=selected.cloud_percentage,
+                        fieldCoveragePercentage=selected.field_coverage_percentage,
+                        shadowPercentage=selected.shadow_percentage,
+                        obscuredPercentage=selected.obscured_percentage,
                         validPixelCount=selected.valid_pixels,
                     )
                 )
@@ -345,11 +356,6 @@ class AnalyticsService:
         options: list[_FieldIndexCandidate] = []
         raster_failure_count = 0
         for scene in candidates:
-            is_composite = _is_resourcesat_composite(scene)
-            if not is_composite and (
-                scene.cloud_percent is None or scene.cloud_percent > max_cloud_percentage
-            ):
-                continue
             raster = self._raster_repository.get_for_scene_index(
                 scene_id=scene.id or "",
                 index_name=index_name,
@@ -377,20 +383,42 @@ class AnalyticsService:
                     scale_factor=raster.scale_factor,
                     threshold_classes=threshold.classes_json if threshold else [],
                 )
+                mask_source = self._mask_source(scene, raster)
+                if mask_source is None:
+                    continue
+                mask_stats = categorical_mask_stats(
+                    mask_source,
+                    geometry=request.geometry,
+                    **_mask_class_policy(source_id),
+                )
             except (ObjectStoreNotFoundError, ObjectStoreReadError, RasterioError):
                 raster_failure_count += 1
                 continue
-            valid_pixels = int(stats.pop("validPixelCount", 0) or 0)
-            usable_percentage = float(stats["usablePixelPercentage"] or 0.0)
+            mask_usable_pixels = int(mask_stats["usablePixelCount"] or 0)
+            analytic_valid_pixels = int(stats["validPixelCount"] or 0)
+            valid_pixels = min(mask_usable_pixels, analytic_valid_pixels)
+            # A date is usable only where both the categorical quality mask and
+            # the derived analytic raster contain usable field pixels.  Taking
+            # the lower percentage also prevents a clear mask from admitting an
+            # index COG that is entirely nodata (or only partially populated).
+            usable_percentage = min(
+                float(mask_stats["usablePixelPercentage"] or 0.0),
+                float(stats["usablePixelPercentage"] or 0.0),
+            )
+            field_coverage = float(mask_stats["fieldCoveragePercentage"] or 0.0)
+            cloud_percentage = float(mask_stats["cloudPercentage"] or 0.0)
+            shadow_percentage = float(mask_stats["shadowPercentage"] or 0.0)
+            obscured_percentage = float(mask_stats["obscuredPercentage"] or 0.0)
+            stats.update(mask_stats)
+            stats["validPixelCount"] = valid_pixels
             if valid_pixels < self._settings.field_min_usable_pixels:
+                continue
+            if field_coverage < self._settings.field_min_coverage_percentage:
                 continue
             if usable_percentage / 100 < self._settings.field_usable_pixel_threshold:
                 continue
-            cloud_percentage = (
-                max(0.0, 100.0 - usable_percentage)
-                if is_composite
-                else float(scene.cloud_percent)
-            )
+            if obscured_percentage >= max_cloud_percentage:
+                continue
             options.append(
                 _FieldIndexCandidate(
                     scene=scene,
@@ -400,12 +428,30 @@ class AnalyticsService:
                     valid_pixels=valid_pixels,
                     usable_pixel_percentage=usable_percentage,
                     cloud_percentage=cloud_percentage,
+                    field_coverage_percentage=field_coverage,
+                    shadow_percentage=shadow_percentage,
+                    obscured_percentage=obscured_percentage,
                     threshold=threshold,
                     visualization=visualization,
                 )
             )
 
         return options, raster_failure_count
+
+    def _mask_source(self, scene: ProviderSceneRecord, raster: RasterOutputRecord):
+        metadata_path = raster.metadata.get("mask_object_path")
+        if isinstance(metadata_path, str) and metadata_path:
+            return self._object_store.raster_source(metadata_path)
+        if self._asset_repository is None or not scene.id:
+            return None
+        preferred_key = "mask" if scene.source_id in RESOURCESAT_PROFILES else "scl"
+        for asset in self._asset_repository.list_for_scene(scene.id):
+            if asset.asset_key != preferred_key:
+                continue
+            object_path = asset.mirror_object_path or asset.object_path
+            if object_path:
+                return self._object_store.raster_source(object_path)
+        return None
 
     def _validate_source_index(self, source_id: str, index_name: str) -> None:
         if source_id == self._settings.sentinel2_preload_source_id:
@@ -604,8 +650,8 @@ def _candidate_quality_key(
     return (
         _date_distance_days(scene, requested_date),
         -option.usable_pixel_percentage,
-        -float(scene.coverage_percentage if scene.coverage_percentage is not None else 0.0),
-        option.cloud_percentage,
+        -option.field_coverage_percentage,
+        option.obscured_percentage,
         float(resolution if resolution is not None else fallback_resolution),
         scene.provider_product_id,
     )
@@ -617,8 +663,20 @@ def _date_distance_days(scene: ProviderSceneRecord, requested_date: object) -> i
     return abs((scene.acquisition_at.date() - requested_date).days)
 
 
-def _is_resourcesat_composite(scene: ProviderSceneRecord) -> bool:
-    return scene.provider_metadata.get("composite") is True
+def _mask_class_policy(source_id: str) -> dict[str, tuple[int, ...]]:
+    if source_id in RESOURCESAT_PROFILES:
+        return {
+            "nodata_classes": (0,),
+            "usable_classes": (1, 4),
+            "cloud_classes": (2,),
+            "shadow_classes": (3,),
+        }
+    return {
+        "nodata_classes": (0,),
+        "usable_classes": (4, 5, 6),
+        "cloud_classes": (8, 9, 10),
+        "shadow_classes": (3,),
+    }
 
 
 def _provider_route_for_scene(scene: ProviderSceneRecord) -> str:
@@ -631,14 +689,11 @@ def _provider_route_for_scene(scene: ProviderSceneRecord) -> str:
     return "earthsearch:sentinel-2-l2a"
 
 
-def _quality_warnings(source_id: str, scene: ProviderSceneRecord) -> list[str]:
+def _quality_warnings(source_id: str) -> list[str]:
     profile = RESOURCESAT_PROFILES.get(source_id)
     if profile is None:
         return []
     warnings: list[str] = []
-    coverage = scene.coverage_percentage
-    if profile.instrument == "LISS-4" and coverage is not None and float(coverage) < 99.5:
-        warnings.append("LISS-4 scene only partially covers the requested AOI.")
     if profile.instrument == "AWiFS":
         warnings.append("AWiFS native resolution is coarse for field-scale analytics.")
     return warnings

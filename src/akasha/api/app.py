@@ -158,6 +158,7 @@ def create_app(
         field_query_repository=field_query_repository,
         scene_repository=scene_repository,
         raster_repository=raster_repository,
+        asset_repository=asset_repository,
         tile_layer_repository=tile_layer_repository,
         object_store=objects,
         profile_repository=profile_repository,

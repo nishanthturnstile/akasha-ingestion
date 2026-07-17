@@ -168,6 +168,7 @@ class Settings(BaseSettings):
     backfill_search_item_cap: int = Field(default=1000, gt=0)
     field_usable_pixel_threshold: float = Field(default=0.80, ge=0, le=1)
     field_max_cloud_percentage: float = Field(default=20.0, ge=0, le=20)
+    field_min_coverage_percentage: float = Field(default=95.0, ge=0, le=100)
 
     sentinel2_profile_version: str = "sentinel2-l2a-earthsearch-v1"
     selection_policy_version: str = "field-selection-v1"
