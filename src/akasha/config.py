@@ -3,10 +3,10 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Environment(StrEnum):
@@ -106,7 +106,9 @@ class Settings(BaseSettings):
     resourcesat_liss3_preload_schedule_hour_utc: int = Field(default=3, ge=0, le=23)
     resourcesat_liss3_preload_schedule_minute_utc: int = Field(default=0, ge=0, le=59)
     resourcesat_liss3_readiness_enabled: bool = False
-    resourcesat_liss3_readiness_required_indices: tuple[str, ...] = ("ndvi",)
+    resourcesat_liss3_readiness_required_indices: Annotated[tuple[str, ...], NoDecode] = (
+        "ndvi",
+    )
     resourcesat_liss3_processing_resolution_m: float | None = Field(default=None, gt=0)
     resourcesat_liss3_composite_min_coverage_percent: float = Field(
         default=95.0,
@@ -125,7 +127,9 @@ class Settings(BaseSettings):
     resourcesat_liss4_preload_schedule_hour_utc: int = Field(default=3, ge=0, le=23)
     resourcesat_liss4_preload_schedule_minute_utc: int = Field(default=30, ge=0, le=59)
     resourcesat_liss4_readiness_enabled: bool = False
-    resourcesat_liss4_readiness_required_indices: tuple[str, ...] = ("ndvi",)
+    resourcesat_liss4_readiness_required_indices: Annotated[tuple[str, ...], NoDecode] = (
+        "ndvi",
+    )
     resourcesat_liss4_processing_resolution_m: float | None = Field(default=None, gt=0)
     resourcesat_liss4_composite_min_coverage_percent: float = Field(
         default=10.0,
@@ -144,7 +148,9 @@ class Settings(BaseSettings):
     resourcesat_awifs_preload_schedule_hour_utc: int = Field(default=4, ge=0, le=23)
     resourcesat_awifs_preload_schedule_minute_utc: int = Field(default=0, ge=0, le=59)
     resourcesat_awifs_readiness_enabled: bool = False
-    resourcesat_awifs_readiness_required_indices: tuple[str, ...] = ("ndvi",)
+    resourcesat_awifs_readiness_required_indices: Annotated[tuple[str, ...], NoDecode] = (
+        "ndvi",
+    )
     resourcesat_awifs_processing_resolution_m: float | None = Field(default=None, gt=0)
     resourcesat_awifs_composite_min_coverage_percent: float = Field(
         default=60.0,
