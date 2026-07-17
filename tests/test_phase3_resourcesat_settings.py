@@ -149,10 +149,41 @@ def test_staging_compose_wires_safe_bounded_resourcesat_runtime() -> None:
         "AKASHA_SOURCE_MIRROR_REQUIRED_HEADROOM_BYTES: "
         "${AKASHA_SOURCE_MIRROR_REQUIRED_HEADROOM_BYTES:-21474836480}" in compose
     )
+    for source in ("LISS3", "LISS4", "AWIFS"):
+        assert (
+            f"AKASHA_RESOURCESAT_{source}_PRELOAD_SCHEDULE_ENABLED: "
+            f"${{AKASHA_RESOURCESAT_{source}_PRELOAD_SCHEDULE_ENABLED:-true}}" in compose
+        )
+        assert (
+            f"AKASHA_RESOURCESAT_{source}_READINESS_ENABLED: "
+            f"${{AKASHA_RESOURCESAT_{source}_READINESS_ENABLED:-true}}" in compose
+        )
+
     assert (
-        "AKASHA_RESOURCESAT_LISS3_READINESS_ENABLED: "
-        "${AKASHA_RESOURCESAT_LISS3_READINESS_ENABLED:-true}" in compose
+        "AKASHA_SENTINEL2_PRELOAD_SCHEDULE_ENABLED: "
+        "${AKASHA_SENTINEL2_PRELOAD_SCHEDULE_ENABLED:-true}" in compose
     )
+
+
+def test_base_compose_propagates_every_resourcesat_source_contract() -> None:
+    compose = (REPO_ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
+
+    for source in ("LISS3", "LISS4", "AWIFS"):
+        for setting in (
+            "PRELOAD_SOURCE_ID",
+            "PRELOAD_AOI_ID",
+            "PRELOAD_PROVIDER_ROUTE",
+            "PRELOAD_DATE_WINDOW_DAYS",
+            "PRELOAD_REFRESH_DAYS",
+            "PRELOAD_FRESHNESS_MAX_AGE_HOURS",
+            "PRELOAD_SCHEDULE_ENABLED",
+            "READINESS_ENABLED",
+            "READINESS_REQUIRED_INDICES",
+            "PROCESSING_RESOLUTION_M",
+            "COMPOSITE_MIN_COVERAGE_PERCENT",
+        ):
+            key = f"AKASHA_RESOURCESAT_{source}_{setting}"
+            assert f"  {key}: ${{{key}:-" in compose
 
 
 def test_staging_resourcesat_heavy_worker_has_provider_egress() -> None:

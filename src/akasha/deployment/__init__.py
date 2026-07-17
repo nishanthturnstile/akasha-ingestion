@@ -1,0 +1,1 @@
+"""Deployment contract validation."""

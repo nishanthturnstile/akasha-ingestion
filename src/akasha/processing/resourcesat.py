@@ -190,8 +190,8 @@ LISS3_PROFILE: Final[ResourceSatProfile] = ResourceSatProfile(
     validation_profile_version="phase3-resourcesat-liss3-boa-validation-v1",
     pgstac_collection="akasha-resourcesat-2a-liss3-boa-derived-v1",
     source_notes=(
-        "LISS-3 BOA production candidate; exposure remains disabled pending staging "
-        "acceptance."
+        "LISS-3 BOA production profile; runtime readiness remains subject to "
+        "successful, fresh, complete staging outputs."
     ),
 )
 

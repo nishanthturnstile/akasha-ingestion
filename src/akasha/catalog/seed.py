@@ -9,8 +9,8 @@ SEED_SOURCES: tuple[SourceResponse, ...] = (
         provider_adapter="earthsearch",
         instrument_mode="MSI",
         analysis_level="L2A",
-        schedule_state="manual-only",
-        product_exposure="internal_qa",
+        schedule_state="scheduled",
+        product_exposure="public",
         supported_indices=["ndvi", "msavi", "ndmi", "ndbi", "ndre", "reci"],
     ),
     SourceResponse(
@@ -19,8 +19,8 @@ SEED_SOURCES: tuple[SourceResponse, ...] = (
         provider_adapter="bhoonidhi",
         instrument_mode="LISS-4",
         analysis_level="L2",
-        schedule_state="disabled",
-        product_exposure="hidden",
+        schedule_state="scheduled",
+        product_exposure="public",
         supported_indices=["ndvi", "msavi", "ndwi_green_nir"],
     ),
     SourceResponse(
@@ -29,8 +29,8 @@ SEED_SOURCES: tuple[SourceResponse, ...] = (
         provider_adapter="bhoonidhi",
         instrument_mode="LISS-3",
         analysis_level="BOA",
-        schedule_state="disabled",
-        product_exposure="hidden",
+        schedule_state="scheduled",
+        product_exposure="public",
         supported_indices=["ndvi", "msavi", "ndmi", "ndwi_green_nir"],
     ),
     SourceResponse(
@@ -39,8 +39,8 @@ SEED_SOURCES: tuple[SourceResponse, ...] = (
         provider_adapter="bhoonidhi",
         instrument_mode="AWiFS",
         analysis_level="BOA",
-        schedule_state="disabled",
-        product_exposure="hidden",
+        schedule_state="scheduled",
+        product_exposure="public",
         supported_indices=["ndvi", "msavi", "ndmi", "ndwi_green_nir"],
     ),
     SourceResponse(
