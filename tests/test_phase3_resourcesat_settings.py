@@ -237,3 +237,4 @@ def test_staging_resourcesat_heavy_worker_has_provider_egress() -> None:
     worker_heavy = compose[worker_start:worker_end]
 
     assert "    networks: [edge, internal]" in worker_heavy
+    assert "memory: ${AKASHA_WORKER_HEAVY_MEMORY_LIMIT:-7G}" in worker_heavy

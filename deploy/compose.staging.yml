@@ -176,7 +176,7 @@ services:
       resources:
         limits:
           cpus: "1.50"
-          memory: 5G
+          memory: ${AKASHA_WORKER_HEAVY_MEMORY_LIMIT:-7G}
 
   postgres:
     restart: unless-stopped
