@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from akasha.jobs import resourcesat_tasks
 from akasha.jobs.celery_app import celery_app
+from akasha.services.resourcesat_ingestion import ResourceSatIngestionService
 
 
 def test_resourcesat_celery_routes_use_existing_queues() -> None:
@@ -53,9 +54,63 @@ def test_resourcesat_scheduler_task_invokes_orchestration(monkeypatch) -> None:
     assert result == [{"status": "planned", "dryRun": True, "sourceFilter": []}]
 
 
+def test_redelivered_resourcesat_backfill_recovers_worker_lost_state(monkeypatch) -> None:
+    fake_service = _FakeService()
+    monkeypatch.setattr(resourcesat_tasks, "_create_service", lambda: fake_service)
+    resourcesat_tasks.backfill.push_request(delivery_info={"redelivered": True})
+    try:
+        result = resourcesat_tasks.backfill.run("job-1", mode="full_pipeline")
+    finally:
+        resourcesat_tasks.backfill.pop_request()
+
+    assert result == {"job_id": "job-1", "status": "completed"}
+    assert fake_service.recovered == ["job-1"]
+
+
+def test_resourcesat_recovery_closes_running_stages_and_requeues_job() -> None:
+    running = SimpleNamespace(stage_id="stage-running", status=SimpleNamespace(value="running"))
+    completed = SimpleNamespace(
+        stage_id="stage-completed",
+        status=SimpleNamespace(value="completed"),
+    )
+    job = SimpleNamespace(job_id="job-1")
+    job_store = SimpleNamespace(
+        get=lambda job_id: job,
+        mark_queued=lambda value: queued.append(value),
+    )
+    stage_store = SimpleNamespace(
+        list_for_job=lambda job_id: [running, completed],
+        mark_failed=lambda stage_id, **kwargs: failed.append((stage_id, kwargs)),
+    )
+    queued = []
+    failed = []
+    service = object.__new__(ResourceSatIngestionService)
+    service._job_store = job_store
+    service._stage_store = stage_store
+
+    service.recover_worker_lost("job-1")
+
+    assert queued == [job]
+    assert failed == [
+        (
+            "stage-running",
+            {
+                "error_code": "worker_lost",
+                "error_message": (
+                    "Celery redelivered the task after its worker process exited."
+                ),
+            },
+        )
+    ]
+
+
 class _FakeService:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str | None]] = []
+        self.recovered: list[str] = []
+
+    def recover_worker_lost(self, job_id: str) -> None:
+        self.recovered.append(job_id)
 
     def execute_backfill(
         self,

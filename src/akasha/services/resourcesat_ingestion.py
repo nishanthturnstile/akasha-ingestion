@@ -313,6 +313,20 @@ class ResourceSatIngestionService:
             self._job_store.mark_failed(job, error=redact_string(str(exc)))
             raise
 
+    def recover_worker_lost(self, job_id: str) -> None:
+        """Close interrupted stages before Celery redelivers a worker-lost task."""
+        job = self._job_store.get(job_id)
+        if job is None:
+            raise ValueError(f"job not found: {job_id}")
+        for stage in self._stage_store.list_for_job(job_id):
+            if stage.status.value == "running":
+                self._stage_store.mark_failed(
+                    stage.stage_id,
+                    error_code="worker_lost",
+                    error_message="Celery redelivered the task after its worker process exited.",
+                )
+        self._job_store.mark_queued(job)
+
     def _run_search_stage(
         self,
         job: Job,
@@ -330,11 +344,19 @@ class ResourceSatIngestionService:
                 date_end=summary.date_end,
                 max_items=self._settings.backfill_search_item_cap,
             )
-            selected = [
+            eligible = [
                 candidate
                 for candidate in candidates
                 if candidate.online and candidate.intersects_aoi
-            ][: self._settings.bhoonidhi_max_downloads_per_run]
+            ]
+            selected = sorted(
+                eligible,
+                key=lambda candidate: (
+                    candidate.overlap_area,
+                    candidate.acquisition_at or datetime.min.replace(tzinfo=UTC),
+                ),
+                reverse=True,
+            )[: self._settings.resourcesat_max_downloads_for_source(job.source_id)]
             summary.searched_count = len(candidates)
             summary.selected_count = len(selected)
             summary.product_ids = [candidate.provider_product_id for candidate in selected]

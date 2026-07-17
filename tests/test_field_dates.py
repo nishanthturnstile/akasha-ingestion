@@ -255,6 +255,57 @@ def test_field_dates_excludes_scene_with_unknown_cloud_metadata() -> None:
     assert response.dates[0].available is False
 
 
+def test_field_dates_uses_field_quality_for_cloudy_resourcesat_composite() -> None:
+    service, _queries, _layers = _build_service()
+    acquisition_date = date(2026, 1, 11)
+    scene_id = "liss4-composite"
+    service._scene_repository.upsert(
+        ProviderSceneRecord(
+            id=scene_id,
+            provider_adapter="bhoonidhi",
+            source_id="resourcesat-2a-liss4-mx70-l2",
+            provider_product_id="resourcesat-2a-liss4-mx70-l2:composite:aoi:2026-01-11",
+            acquisition_at=datetime.combine(
+                acquisition_date,
+                datetime.min.time(),
+                tzinfo=UTC,
+            ),
+            cloud_percent=65.0,
+            provider_metadata={"composite": True},
+            aoi_id="bangalore_60km_geodesic_aoi",
+        )
+    )
+    object_path = f"indices/{scene_id}/ndvi.cog.tif"
+    service._object_store.put_bytes(object_path, _cog(valid=True))
+    service._raster_repository.upsert_derived_index(
+        RasterOutputRecord(
+            id=None,
+            scene_id=scene_id,
+            output_kind="derived_index",
+            object_path=object_path,
+            index_name="ndvi",
+            formula_version="ndvi-resourcesat-v1",
+            processing_profile_version="resourcesat-liss4-v1",
+            processing_resolution=11.6,
+            scale_factor=10000,
+            nodata_value=_NODATA,
+        )
+    )
+
+    response = service.field_dates(
+        FieldDatesRequest(
+            geometry=_FIELD_GEOMETRY,
+            sourceId="resourcesat-2a-liss4-mx70-l2",
+            index="NDVI",
+            dates=[acquisition_date],
+        )
+    )
+
+    assert response.dates[0].available is True
+    assert response.dates[0].usablePixelPercentage == 100.0
+    assert response.dates[0].cloudPercentage == 0.0
+
+
 def test_field_dates_raises_when_candidate_raster_cannot_be_read() -> None:
     service, _queries, _layers = _build_service()
     service._object_store._objects.pop("indices/scene-2026-06-01/ndvi.cog.tif")

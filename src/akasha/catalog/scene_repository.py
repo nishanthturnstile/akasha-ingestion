@@ -85,7 +85,11 @@ class InMemorySceneRepository:
             if scene.source_id == source_id
             and scene.acquisition_at is not None
             and start <= scene.acquisition_at.date() <= end
-            and (scene.cloud_percent is None or scene.cloud_percent <= max_cloud_percentage)
+            and (
+                _is_composite_scene(scene)
+                or scene.cloud_percent is None
+                or scene.cloud_percent <= max_cloud_percentage
+            )
         ]
         candidates.sort(
             key=lambda scene: (
@@ -248,7 +252,11 @@ class DatabaseSceneRepository:
                     FROM akasha.provider_scenes
                     WHERE source_id = :source_id
                       AND acquisition_at::date BETWEEN :start_date AND :end_date
-                      AND (cloud_percent IS NULL OR cloud_percent <= :max_cloud_percentage)
+                      AND (
+                        provider_metadata->>'composite' = 'true'
+                        OR cloud_percent IS NULL
+                        OR cloud_percent <= :max_cloud_percentage
+                      )
                     ORDER BY
                       ABS(acquisition_at::date - :requested_date),
                       cloud_percent NULLS LAST,
@@ -266,6 +274,10 @@ class DatabaseSceneRepository:
                 },
             ).mappings().all()
         return [_row_to_scene(row) for row in rows]
+
+
+def _is_composite_scene(scene: ProviderSceneRecord) -> bool:
+    return scene.provider_metadata.get("composite") is True
 
 
 def _scene_params(scene: ProviderSceneRecord) -> dict[str, Any]:
