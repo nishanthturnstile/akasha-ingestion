@@ -118,8 +118,6 @@ class Sentinel2IngestionService:
         for scene in reversed(scenes):
             if (
                 scene.acquisition_at is not None
-                and scene.cloud_percent is not None
-                and scene.cloud_percent <= self._settings.field_max_cloud_percentage
                 and self._scene_is_complete(scene)
             ):
                 return scene.acquisition_at.date()
@@ -193,7 +191,7 @@ class Sentinel2IngestionService:
                     date_start=datetime.fromisoformat(job.date_start).date(),
                     date_end=datetime.fromisoformat(job.date_end).date(),
                     intersects=aoi.geometry,
-                    max_cloud_percentage=self._settings.field_max_cloud_percentage,
+                    max_cloud_percentage=None,
                     required_assets=SENTINEL2_REQUIRED_ASSETS,
                     max_items=self._settings.backfill_search_item_cap,
                 )
@@ -252,12 +250,6 @@ class Sentinel2IngestionService:
 
         for item in items:
             try:
-                if (
-                    item.cloud_percent is None
-                    or item.cloud_percent > self._settings.field_max_cloud_percentage
-                ):
-                    skipped += 1
-                    continue
                 validate_required_assets(item)
                 accepted += 1
                 stac_item_ids.append(item.stac_item_id)
@@ -516,6 +508,7 @@ class Sentinel2IngestionService:
                         "pgstac_collection": "akasha-sentinel-2-l2a-derived-v1",
                         "pgstac_asset_key": index_name,
                         "pgstac_href": f"s3://{self._settings.minio_bucket}/{object_path}",
+                        "mask_object_path": assets_by_key["scl"].mirror_object_path,
                     },
                 )
             )

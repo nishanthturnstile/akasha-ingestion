@@ -85,18 +85,13 @@ class InMemorySceneRepository:
             if scene.source_id == source_id
             and scene.acquisition_at is not None
             and start <= scene.acquisition_at.date() <= end
-            and (
-                _is_composite_scene(scene)
-                or scene.cloud_percent is None
-                or scene.cloud_percent <= max_cloud_percentage
-            )
         ]
         candidates.sort(
             key=lambda scene: (
                 abs((scene.acquisition_at.date() - requested_date).days)
                 if scene.acquisition_at
                 else 9999,
-                scene.cloud_percent if scene.cloud_percent is not None else 101,
+                scene.acquisition_at or datetime.min.replace(tzinfo=UTC),
             )
         )
         return candidates[:limit]
@@ -252,14 +247,8 @@ class DatabaseSceneRepository:
                     FROM akasha.provider_scenes
                     WHERE source_id = :source_id
                       AND acquisition_at::date BETWEEN :start_date AND :end_date
-                      AND (
-                        provider_metadata->>'composite' = 'true'
-                        OR cloud_percent IS NULL
-                        OR cloud_percent <= :max_cloud_percentage
-                      )
                     ORDER BY
                       ABS(acquisition_at::date - :requested_date),
-                      cloud_percent NULLS LAST,
                       acquisition_at DESC
                     LIMIT :limit
                     """
@@ -269,7 +258,6 @@ class DatabaseSceneRepository:
                     "requested_date": requested_date,
                     "start_date": requested_date - timedelta(days=window_days),
                     "end_date": requested_date + timedelta(days=window_days),
-                    "max_cloud_percentage": max_cloud_percentage,
                     "limit": limit,
                 },
             ).mappings().all()

@@ -137,7 +137,7 @@ def test_resourcesat_readiness_reports_missing_required_index() -> None:
     assert data["reasonCode"] == "MISSING_INDEX_COVERAGE"
 
 
-def test_resourcesat_readiness_reports_low_coverage() -> None:
+def test_resourcesat_readiness_keeps_partial_output_as_processed_candidate() -> None:
     app = _app(readiness_enabled=True)
     _seed_successful_resourcesat_job(
         app,
@@ -156,8 +156,9 @@ def test_resourcesat_readiness_reports_low_coverage() -> None:
 
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["status"] == "UNAVAILABLE"
-    assert data["reasonCode"] == "LOW_COVERAGE"
+    assert data["status"] == "AVAILABLE"
+    assert data["availableDates"] == ["2026-03-19"]
+    assert data["reasonCode"] is None
 
 
 def test_resourcesat_readiness_reports_aoi_and_source_mismatch() -> None:

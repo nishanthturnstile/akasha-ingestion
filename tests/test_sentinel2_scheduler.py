@@ -185,7 +185,7 @@ def test_no_result_daily_checks_retry_shifted_window_with_cloud_cap() -> None:
         (date(2026, 7, 7), date(2026, 7, 13)),
         (date(2026, 7, 8), date(2026, 7, 14)),
     ]
-    assert all(request.max_cloud_percentage == 20 for request in provider.requests)
+    assert all(request.max_cloud_percentage is None for request in provider.requests)
 
 
 def test_redelivered_backfill_recovers_worker_lost_state(monkeypatch) -> None:

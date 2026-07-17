@@ -436,10 +436,9 @@ def _readiness_scenes(scenes: list[object], policy: ReadinessPolicy) -> list[obj
 
 
 def _coverage_ok(scene: object, policy: ReadinessPolicy) -> bool:
-    if policy.min_coverage_percent is None:
-        return True
-    coverage = getattr(scene, "coverage_percentage", None)
-    return coverage is None or float(coverage) >= policy.min_coverage_percent
+    # Source readiness reports integrity-valid processed dates. Spatial suitability
+    # is evaluated later against the selected field polygon.
+    return True
 
 
 def _no_outputs_code(policy: ReadinessPolicy) -> str:

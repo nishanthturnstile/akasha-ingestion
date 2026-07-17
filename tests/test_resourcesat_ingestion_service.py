@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -11,8 +12,32 @@ from akasha.jobs.stage_store import InMemoryStageStore, StageStatus
 from akasha.jobs.store import InMemoryJobStore
 from akasha.providers.bhoonidhi import BhoonidhiCandidate
 from akasha.schemas import SyncRequest
-from akasha.services.resourcesat_ingestion import ResourceSatIngestionService
+from akasha.services.resourcesat_ingestion import (
+    ResourceSatIngestionService,
+    _latest_exact_date_manifests,
+)
 from akasha.storage.object_store import InMemoryObjectStore
+
+
+def test_composite_selection_never_blends_different_acquisition_dates(tmp_path: Path) -> None:
+    manifests: list[Path] = []
+    for name, acquisition_datetime in (
+        ("older", "2026-01-14T05:30:00Z"),
+        ("latest-a", "2026-01-15T05:30:00Z"),
+        ("latest-b", "2026-01-15T06:00:00Z"),
+    ):
+        path = tmp_path / name / "prepare_manifest.json"
+        path.parent.mkdir()
+        path.write_text(
+            json.dumps({"acquisition_datetime": acquisition_datetime}),
+            encoding="utf-8",
+        )
+        manifests.append(path)
+
+    acquisition_date, selected = _latest_exact_date_manifests(manifests)
+
+    assert acquisition_date == date(2026, 1, 15)
+    assert selected == manifests[1:]
 
 
 def test_resourcesat_metadata_only_backfill_records_summary_and_skipped_stages(

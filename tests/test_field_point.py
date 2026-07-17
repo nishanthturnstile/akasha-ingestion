@@ -59,6 +59,24 @@ def _synthetic_ndvi_cog() -> bytes:
         return mem.read()
 
 
+def _synthetic_scl_cog() -> bytes:
+    transform = from_bounds(*_COG_BOUNDS, width=4, height=4)
+    data = np.full((4, 4), 4, dtype="uint8")
+    with MemoryFile() as mem:
+        with mem.open(
+            driver="GTiff",
+            height=4,
+            width=4,
+            count=1,
+            dtype="uint8",
+            crs="EPSG:4326",
+            transform=transform,
+            nodata=0,
+        ) as dataset:
+            dataset.write(data, 1)
+        return mem.read()
+
+
 def _settings(*, api_key: str | None = None) -> Settings:
     return Settings(
         environment=Environment.TEST,
@@ -92,6 +110,8 @@ def _put_raster(
 ) -> RasterOutputRecord:
     object_path = "indices/earthsearch/sentinel-2-l2a/S2_POINT_001/ndvi.cog.tif"
     object_store.put_bytes(object_path, _synthetic_ndvi_cog())
+    mask_path = "indices/earthsearch/sentinel-2-l2a/S2_POINT_001/scl.tif"
+    object_store.put_bytes(mask_path, _synthetic_scl_cog())
     return raster_repository.upsert_derived_index(
         RasterOutputRecord(
             id=None,
@@ -107,6 +127,7 @@ def _put_raster(
             native_resolution=10.0,
             display_resolution=10.0,
             cloud_mask_version="scl-v1",
+            metadata={"mask_object_path": mask_path},
         )
     )
 
@@ -328,6 +349,8 @@ def test_field_index_skips_missing_nearest_raster_for_valid_fallback() -> None:
             )
         )
         object_path = f"indices/earthsearch/sentinel-2-l2a/{product_id}/ndvi.cog.tif"
+        mask_path = f"indices/earthsearch/sentinel-2-l2a/{product_id}/scl.tif"
+        object_store.put_bytes(mask_path, _synthetic_scl_cog())
         if scene_id == "scene-valid":
             object_store.put_bytes(object_path, _synthetic_ndvi_cog())
         raster_repository.upsert_derived_index(
@@ -345,6 +368,7 @@ def test_field_index_skips_missing_nearest_raster_for_valid_fallback() -> None:
                 native_resolution=10.0,
                 display_resolution=10.0,
                 cloud_mask_version="scl-v1",
+                metadata={"mask_object_path": mask_path},
             )
         )
     analytics = AnalyticsService(

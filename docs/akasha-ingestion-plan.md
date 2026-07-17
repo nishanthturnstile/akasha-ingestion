@@ -494,10 +494,11 @@ Cloud handling should be done at two levels:
 | Quality Check               | Default Rule                                             |
 | --------------------------- | -------------------------------------------------------- |
 | Preferred scene cloud cover | ≤ 20%                                                    |
-| Field-level cloud cover     | ≤ 20%                                                    |
+| Field-level cloud + shadow  | < 20%                                                    |
+| Field spatial coverage     | ≥ 95%                                                    |
 | Field usable pixels         | ≥ 80%                                                    |
 | If scene cloud > 20%        | Do not automatically reject; check field/AOI-level cloud |
-| If field cloud > 20%        | Mark as low-quality or unavailable                       |
+| If field cloud + shadow ≥ 20% | Mark unavailable for the normal field timeline         |
 | Cloud mask source           | Sensor-specific: S2 SCL, Landsat QA_PIXEL, ResourceSat custom (confidence unknown until validated) |
 | Scene selection             | Best-scene rule, window ± 7 days, quality-first (see §8.3) |
 | Minimum field pixels        | Field must contain ≥ a configured count of valid pixels for the source's resolution; below the floor, return a mixed-pixel / low-confidence warning (see §10.4) |
