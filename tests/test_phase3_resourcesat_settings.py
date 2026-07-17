@@ -22,6 +22,8 @@ def test_resourcesat_settings_defaults_are_safe_and_gated() -> None:
     assert settings.resourcesat_liss3_preload_source_id == "resourcesat-2a-liss3-boa"
     assert settings.resourcesat_liss4_preload_source_id == "resourcesat-2a-liss4-mx70-l2"
     assert settings.resourcesat_awifs_preload_source_id == "resourcesat-2a-awifs-boa"
+    assert settings.resourcesat_liss4_preload_date_window_days == 365
+    assert settings.resourcesat_awifs_preload_date_window_days == 365
     assert settings.resourcesat_liss3_preload_provider_route == (
         "bhoonidhi:ResourceSat-2A_LISS3_BOA"
     )

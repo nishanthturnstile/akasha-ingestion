@@ -48,6 +48,21 @@ def test_resourcesat_metadata_only_backfill_records_summary_and_skipped_stages(
     assert raw_download.metadata["skipped"] is True
 
 
+def test_resourcesat_selection_prioritizes_aoi_overlap_before_recency(
+    tmp_path: Path,
+) -> None:
+    recent_grazing = _candidate("RECENT_GRAZING", overlap_area=0.01)
+    older_covering = _candidate("OLDER_COVERING", overlap_area=0.75)
+    service = _service(
+        tmp_path,
+        candidates=[recent_grazing, older_covering],
+    )
+
+    job = service.start_backfill(_request(mode="metadata_only"))
+
+    assert job.result_metadata["backfill_summary"]["product_ids"] == ["OLDER_COVERING"]
+
+
 def test_resourcesat_download_only_uploads_raw_zip_and_is_idempotent(tmp_path: Path) -> None:
     object_store = InMemoryObjectStore()
     service = _service(
@@ -283,7 +298,12 @@ class _FailingSearchClient:
         raise AssertionError("provider search should not be called without approved runtime")
 
 
-def _candidate(product_id: str, *, online: bool = True) -> BhoonidhiCandidate:
+def _candidate(
+    product_id: str,
+    *,
+    online: bool = True,
+    overlap_area: float = 1.0,
+) -> BhoonidhiCandidate:
     return BhoonidhiCandidate(
         source_id="resourcesat-2a-liss3-boa",
         collection="ResourceSat-2A_LISS3_BOA",
@@ -293,7 +313,7 @@ def _candidate(product_id: str, *, online: bool = True) -> BhoonidhiCandidate:
         acquisition_at=datetime(2026, 1, 15, 5, 30, tzinfo=UTC),
         bbox=[77.0, 12.0, 78.0, 13.0],
         overlap_bbox=[77.0, 12.0, 78.0, 13.0],
-        overlap_area=1.0,
+        overlap_area=overlap_area,
         online=online,
         intersects_aoi=True,
         raw_item={"geometry": _geometry()},

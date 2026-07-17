@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     resourcesat_liss4_preload_source_id: str = "resourcesat-2a-liss4-mx70-l2"
     resourcesat_liss4_preload_aoi_id: str = "bangalore_60km_geodesic_aoi"
     resourcesat_liss4_preload_provider_route: str = "bhoonidhi:ResourceSat-2A_LISS4-MX70_L2"
-    resourcesat_liss4_preload_date_window_days: int = Field(default=30, gt=0)
+    resourcesat_liss4_preload_date_window_days: int = Field(default=365, gt=0)
     resourcesat_liss4_preload_refresh_days: int = Field(default=14, gt=0)
     resourcesat_liss4_preload_freshness_max_age_hours: int = Field(default=336, gt=0)
     resourcesat_liss4_preload_schedule_enabled: bool = False
@@ -140,7 +140,7 @@ class Settings(BaseSettings):
     resourcesat_awifs_preload_source_id: str = "resourcesat-2a-awifs-boa"
     resourcesat_awifs_preload_aoi_id: str = "bangalore_60km_geodesic_aoi"
     resourcesat_awifs_preload_provider_route: str = "bhoonidhi:ResourceSat-2A_AWIFS_BOA"
-    resourcesat_awifs_preload_date_window_days: int = Field(default=30, gt=0)
+    resourcesat_awifs_preload_date_window_days: int = Field(default=365, gt=0)
     resourcesat_awifs_preload_refresh_days: int = Field(default=14, gt=0)
     resourcesat_awifs_preload_freshness_max_age_hours: int = Field(default=336, gt=0)
     resourcesat_awifs_preload_schedule_enabled: bool = False

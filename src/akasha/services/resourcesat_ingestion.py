@@ -344,11 +344,19 @@ class ResourceSatIngestionService:
                 date_end=summary.date_end,
                 max_items=self._settings.backfill_search_item_cap,
             )
-            selected = [
+            eligible = [
                 candidate
                 for candidate in candidates
                 if candidate.online and candidate.intersects_aoi
-            ][: self._settings.bhoonidhi_max_downloads_per_run]
+            ]
+            selected = sorted(
+                eligible,
+                key=lambda candidate: (
+                    candidate.overlap_area,
+                    candidate.acquisition_at or datetime.min.replace(tzinfo=UTC),
+                ),
+                reverse=True,
+            )[: self._settings.bhoonidhi_max_downloads_per_run]
             summary.searched_count = len(candidates)
             summary.selected_count = len(selected)
             summary.product_ids = [candidate.provider_product_id for candidate in selected]
