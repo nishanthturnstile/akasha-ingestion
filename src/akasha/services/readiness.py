@@ -5,7 +5,10 @@ from datetime import UTC, datetime, timedelta
 
 from akasha.config import Settings
 from akasha.jobs.store import Job, JobStatus
-from akasha.processing.resourcesat import RESOURCESAT_PROFILES
+from akasha.processing.resourcesat import (
+    RESOURCESAT_PROFILES,
+    has_exact_date_composite_provenance,
+)
 from akasha.schemas import (
     AnalyticsReadinessResponse,
     ReadinessIndexCoverage,
@@ -429,9 +432,15 @@ def _readiness_scenes(scenes: list[object], policy: ReadinessPolicy) -> list[obj
     return [
         scene
         for scene in scenes
-        if getattr(scene, "status", None) == "composited"
-        or getattr(scene, "provider_metadata", {}).get("output_kind")
-        == RESOURCESAT_COMPOSITE_OUTPUT_KIND
+        if (
+            getattr(scene, "status", None) == "composited"
+            or getattr(scene, "provider_metadata", {}).get("output_kind")
+            == RESOURCESAT_COMPOSITE_OUTPUT_KIND
+        )
+        and has_exact_date_composite_provenance(
+            getattr(scene, "acquisition_at", None),
+            getattr(scene, "provider_metadata", {}),
+        )
     ]
 
 

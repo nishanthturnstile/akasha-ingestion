@@ -206,6 +206,28 @@ def test_resourcesat_field_index_unavailable_uses_requested_source_window() -> N
     assert "+/- 30 days" in data["reason"]
 
 
+def test_resourcesat_field_index_excludes_legacy_cross_date_composite() -> None:
+    harness = _analytics_harness()
+    _seed_scene_and_raster(
+        harness,
+        source_id=RESOURCESAT_LISS3_BOA_SOURCE_ID,
+        product_id="RS_LISS3_TEMPORAL_BLEND",
+        value=6500,
+        coverage_percentage=99.0,
+        profile=LISS3_PROFILE,
+        contributing_dates=[date(2026, 3, 18), date(2026, 3, 19)],
+    )
+
+    response = _client_from_harness(harness).post(
+        "/api/v1/analytics/field-index",
+        headers=_headers(),
+        json=_payload(source_id=RESOURCESAT_LISS3_BOA_SOURCE_ID, index="NDVI"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "UNAVAILABLE"
+
+
 def _client_with_scene(
     *,
     source_id: str,
@@ -282,6 +304,7 @@ def _seed_scene_and_raster(
     value: int,
     coverage_percentage: float,
     profile,
+    contributing_dates: list[date] | None = None,
 ) -> None:
     scene = harness.scene_repository.upsert(
         ProviderSceneRecord(
@@ -295,8 +318,22 @@ def _seed_scene_and_raster(
             aoi_id=AOI_ID,
             coverage_percentage=coverage_percentage,
             provider_metadata={
+                "composite": True,
                 "output_kind": RESOURCESAT_COMPOSITE_OUTPUT_KIND,
                 "provider_collection": profile.collection_id,
+                **(
+                    {
+                        "contributing_scenes": [
+                            {
+                                "id": f"scene-{item.isoformat()}",
+                                "acquisition_datetime": f"{item.isoformat()}T00:00:00Z",
+                            }
+                            for item in contributing_dates
+                        ]
+                    }
+                    if contributing_dates is not None
+                    else {}
+                ),
             },
             native_resolution=profile.native_resolution_m,
         )

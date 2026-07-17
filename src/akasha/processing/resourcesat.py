@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from types import MappingProxyType
-from typing import Final
+from typing import Any, Final
 
 import numpy as np
 from numpy.typing import NDArray
@@ -59,6 +60,39 @@ RESOURCESAT_MASK_METHOD: Final[str] = "akasha-threshold-mask-v1"
 RESOURCESAT_REFLECTANCE_SCALE: Final[float] = 0.0001
 RESOURCESAT_REFLECTANCE_OFFSET: Final[float] = 0.0
 RESOURCESAT_VALID_MASK_CLASSES: Final[tuple[int, ...]] = (1, 4)
+
+
+def has_exact_date_composite_provenance(
+    acquisition_at: datetime | None,
+    provider_metadata: Mapping[str, Any],
+) -> bool:
+    """Reject legacy composites that blended scenes from multiple dates."""
+
+    if provider_metadata.get("composite") is not True:
+        return True
+    contributors = provider_metadata.get("contributing_scenes")
+    # Older valid single-date fixtures/items may not carry contributor detail.
+    # When detail is present, however, it must agree exactly with the published
+    # acquisition date; this specifically quarantines the legacy rolling-window
+    # composites that mislabeled temporal blends as a single observation.
+    if not isinstance(contributors, list) or not contributors:
+        return True
+    if acquisition_at is None:
+        return False
+    expected = acquisition_at.date()
+    for contributor in contributors:
+        if not isinstance(contributor, Mapping):
+            return False
+        raw_datetime = contributor.get("acquisition_datetime")
+        if not raw_datetime:
+            return False
+        try:
+            actual = datetime.fromisoformat(str(raw_datetime).replace("Z", "+00:00")).date()
+        except ValueError:
+            return False
+        if actual != expected:
+            return False
+    return True
 
 RESOURCESAT_INDEX_BAND_ROLES: Final[Mapping[str, tuple[str, str]]] = MappingProxyType(
     {
