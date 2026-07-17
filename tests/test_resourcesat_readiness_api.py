@@ -161,6 +161,29 @@ def test_resourcesat_readiness_keeps_partial_output_as_processed_candidate() -> 
     assert data["reasonCode"] is None
 
 
+def test_resourcesat_readiness_excludes_legacy_cross_date_composite() -> None:
+    app = _app(readiness_enabled=True)
+    _seed_successful_resourcesat_job(
+        app,
+        completed_at=datetime(2026, 3, 20, 2, 30, tzinfo=UTC),
+        job_id="job_rs_temporal_blend",
+    )
+    _seed_resourcesat_scene_and_raster(
+        app,
+        scene_date=date(2026, 3, 5),
+        index_name="ndvi",
+        coverage_percentage=99.0,
+        contributing_dates=[date(2026, 2, 28), date(2026, 3, 5)],
+    )
+
+    response = TestClient(app).get(_path(), headers=_headers())
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "UNAVAILABLE"
+    assert data["reasonCode"] == "NO_RESOURCE_SAT_OUTPUTS"
+
+
 def test_resourcesat_readiness_reports_aoi_and_source_mismatch() -> None:
     app = _app(readiness_enabled=True)
     client = TestClient(app)
@@ -243,6 +266,7 @@ def _seed_resourcesat_scene_and_raster(
     index_name: str,
     coverage_percentage: float,
     created_at: datetime | None = None,
+    contributing_dates: list[date] | None = None,
 ) -> None:
     scene = app.state.scene_repository.upsert(
         ProviderSceneRecord(
@@ -256,8 +280,22 @@ def _seed_resourcesat_scene_and_raster(
             aoi_id=AOI_ID,
             coverage_percentage=coverage_percentage,
             provider_metadata={
+                "composite": True,
                 "output_kind": RESOURCESAT_COMPOSITE_OUTPUT_KIND,
                 "provider_collection": "ResourceSat-2A_LISS3_BOA",
+                **(
+                    {
+                        "contributing_scenes": [
+                            {
+                                "id": f"scene-{item.isoformat()}",
+                                "acquisition_datetime": f"{item.isoformat()}T00:00:00Z",
+                            }
+                            for item in contributing_dates
+                        ]
+                    }
+                    if contributing_dates is not None
+                    else {}
+                ),
             },
         )
     )

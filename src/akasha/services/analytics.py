@@ -18,6 +18,7 @@ from akasha.processing.resourcesat import (
     RESOURCESAT_FORMULA_VERSION,
     RESOURCESAT_MASK_METHOD,
     RESOURCESAT_PROFILES,
+    has_exact_date_composite_provenance,
 )
 from akasha.processing.sentinel2 import SENTINEL2_FORMULA_VERSION, SENTINEL2_INDEX_ASSETS
 from akasha.schemas import (
@@ -356,6 +357,11 @@ class AnalyticsService:
         options: list[_FieldIndexCandidate] = []
         raster_failure_count = 0
         for scene in candidates:
+            if source_id in RESOURCESAT_PROFILES and not has_exact_date_composite_provenance(
+                scene.acquisition_at,
+                scene.provider_metadata,
+            ):
+                continue
             raster = self._raster_repository.get_for_scene_index(
                 scene_id=scene.id or "",
                 index_name=index_name,
