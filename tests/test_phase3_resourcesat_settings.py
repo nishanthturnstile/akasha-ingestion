@@ -88,6 +88,20 @@ def test_empty_strings_normalize_for_optional_settings(monkeypatch: pytest.Monke
         assert settings.resourcesat_awifs_processing_resolution_m is None
 
 
+def test_resourcesat_required_indices_accept_compose_csv_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AKASHA_RESOURCESAT_LISS3_READINESS_REQUIRED_INDICES", "ndvi, ndwi")
+    monkeypatch.setenv("AKASHA_RESOURCESAT_LISS4_READINESS_REQUIRED_INDICES", "ndvi")
+    monkeypatch.setenv("AKASHA_RESOURCESAT_AWIFS_READINESS_REQUIRED_INDICES", "ndwi, NDVI")
+
+    settings = Settings()
+
+    assert settings.resourcesat_liss3_readiness_required_indices == ("ndvi", "ndwi")
+    assert settings.resourcesat_liss4_readiness_required_indices == ("ndvi",)
+    assert settings.resourcesat_awifs_readiness_required_indices == ("ndwi", "ndvi")
+
+
 def test_resourcesat_runtime_root_preflight_allows_dry_run_default() -> None:
     validate_resourcesat_runtime_roots(Settings(), dry_run=True)
 
