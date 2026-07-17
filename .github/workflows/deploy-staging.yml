@@ -31,7 +31,7 @@ env:
 jobs:
   build-images:
     name: Build and push ${{ matrix.image }}
-    if: github.repository == 'Akasha-TechCatalyst/akasha-ingestion' && (github.event_name != 'workflow_dispatch' || inputs.image_sha == '')
+    if: github.repository == 'nishanthturnstile/akasha-ingestion' && (github.event_name != 'workflow_dispatch' || inputs.image_sha == '')
     runs-on: [self-hosted, linux, x64, akasha-control]
     strategy:
       fail-fast: false
@@ -71,7 +71,7 @@ jobs:
 
   deploy-staging:
     name: Deploy or roll back akasha-staging
-    if: always() && github.repository == 'Akasha-TechCatalyst/akasha-ingestion' && (needs.build-images.result == 'success' || needs.build-images.result == 'skipped')
+    if: always() && github.repository == 'nishanthturnstile/akasha-ingestion' && (needs.build-images.result == 'success' || needs.build-images.result == 'skipped')
     needs: build-images
     runs-on: [self-hosted, linux, x64, akasha-control]
     env:
