@@ -55,6 +55,7 @@ class _FieldIndexCandidate:
     class_stats: list[dict[str, object]]
     valid_pixels: int
     usable_pixel_percentage: float
+    cloud_percentage: float
     threshold: object | None
     visualization: object | None
 
@@ -166,7 +167,7 @@ class AnalyticsService:
                     layer_id=layer.layer_id,
                     valid_pixel_count=valid_pixels,
                     selection_reason="source_aware_quality_first",
-                    stats_json={**stats, "cloudPercentage": scene.cloud_percent},
+                    stats_json={**stats, "cloudPercentage": selected.cloud_percentage},
                     class_area_json=class_stats,
                     quality_json={
                         "status": quality_status,
@@ -221,7 +222,7 @@ class AnalyticsService:
                     median=stats["median"],
                     stdDev=stats["stdDev"],
                     usablePixelPercentage=float(stats["usablePixelPercentage"] or 0.0),
-                    cloudPercentage=scene.cloud_percent,
+                    cloudPercentage=selected.cloud_percentage,
                 ),
                 classStatistics=class_stats,
                 visualization=FieldIndexVisualization(
@@ -296,7 +297,7 @@ class AnalyticsService:
                             else acquisition_date
                         ),
                         usablePixelPercentage=selected.usable_pixel_percentage,
-                        cloudPercentage=selected.scene.cloud_percent,
+                        cloudPercentage=selected.cloud_percentage,
                         validPixelCount=selected.valid_pixels,
                     )
                 )
@@ -344,7 +345,10 @@ class AnalyticsService:
         options: list[_FieldIndexCandidate] = []
         raster_failure_count = 0
         for scene in candidates:
-            if scene.cloud_percent is None or scene.cloud_percent > max_cloud_percentage:
+            is_composite = _is_resourcesat_composite(scene)
+            if not is_composite and (
+                scene.cloud_percent is None or scene.cloud_percent > max_cloud_percentage
+            ):
                 continue
             raster = self._raster_repository.get_for_scene_index(
                 scene_id=scene.id or "",
@@ -382,6 +386,11 @@ class AnalyticsService:
                 continue
             if usable_percentage / 100 < self._settings.field_usable_pixel_threshold:
                 continue
+            cloud_percentage = (
+                max(0.0, 100.0 - usable_percentage)
+                if is_composite
+                else float(scene.cloud_percent)
+            )
             options.append(
                 _FieldIndexCandidate(
                     scene=scene,
@@ -390,6 +399,7 @@ class AnalyticsService:
                     class_stats=class_stats,
                     valid_pixels=valid_pixels,
                     usable_pixel_percentage=usable_percentage,
+                    cloud_percentage=cloud_percentage,
                     threshold=threshold,
                     visualization=visualization,
                 )
@@ -595,7 +605,7 @@ def _candidate_quality_key(
         _date_distance_days(scene, requested_date),
         -option.usable_pixel_percentage,
         -float(scene.coverage_percentage if scene.coverage_percentage is not None else 0.0),
-        float(scene.cloud_percent if scene.cloud_percent is not None else 101.0),
+        option.cloud_percentage,
         float(resolution if resolution is not None else fallback_resolution),
         scene.provider_product_id,
     )
@@ -605,6 +615,10 @@ def _date_distance_days(scene: ProviderSceneRecord, requested_date: object) -> i
     if scene.acquisition_at is None or not hasattr(requested_date, "toordinal"):
         return 9999
     return abs((scene.acquisition_at.date() - requested_date).days)
+
+
+def _is_resourcesat_composite(scene: ProviderSceneRecord) -> bool:
+    return scene.provider_metadata.get("composite") is True
 
 
 def _provider_route_for_scene(scene: ProviderSceneRecord) -> str:
