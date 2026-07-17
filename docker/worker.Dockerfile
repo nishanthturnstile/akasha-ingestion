@@ -11,6 +11,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libcurl4 libexpat1 libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml README.md ./
+COPY worker.py ./worker.py
 COPY src ./src
 COPY alembic.ini ./
 COPY migrations ./migrations
