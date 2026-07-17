@@ -30,13 +30,19 @@ def scheduled_resourcesat_sources(dry_run: bool = False) -> list[dict[str, objec
     return _run_scheduled_sources(source_filter=None, dry_run=dry_run)
 
 
-@celery_app.task(name="akasha.jobs.resourcesat_tasks.backfill")
+@celery_app.task(bind=True, name="akasha.jobs.resourcesat_tasks.backfill")
 def backfill(
+    task,
     job_id: str,
     mode: str = "metadata_only",
     provider_route: str | None = None,
 ) -> dict[str, str]:
-    return _execute_backfill(job_id, mode=mode, provider_route=provider_route)
+    service = _create_service()
+    delivery_info = getattr(task.request, "delivery_info", {}) or {}
+    if delivery_info.get("redelivered"):
+        service.recover_worker_lost(job_id)
+    job = service.execute_backfill(job_id, mode=mode, provider_route=provider_route)
+    return {"job_id": job.job_id, "status": job.status.value}
 
 
 @celery_app.task(name="akasha.jobs.resourcesat_tasks.provider_search")

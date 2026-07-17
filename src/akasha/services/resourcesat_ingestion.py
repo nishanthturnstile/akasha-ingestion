@@ -313,6 +313,20 @@ class ResourceSatIngestionService:
             self._job_store.mark_failed(job, error=redact_string(str(exc)))
             raise
 
+    def recover_worker_lost(self, job_id: str) -> None:
+        """Close interrupted stages before Celery redelivers a worker-lost task."""
+        job = self._job_store.get(job_id)
+        if job is None:
+            raise ValueError(f"job not found: {job_id}")
+        for stage in self._stage_store.list_for_job(job_id):
+            if stage.status.value == "running":
+                self._stage_store.mark_failed(
+                    stage.stage_id,
+                    error_code="worker_lost",
+                    error_message="Celery redelivered the task after its worker process exited.",
+                )
+        self._job_store.mark_queued(job)
+
     def _run_search_stage(
         self,
         job: Job,
