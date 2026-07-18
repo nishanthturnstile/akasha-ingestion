@@ -137,11 +137,10 @@ def eos04_source_state(settings: Settings) -> SourceState:
         product_exposure="hidden",
         commercial_state="restricted",
         aoi_scope="configured_aois",
-        validation_state="pending",
-        readiness_reasons=(
-            "EOS04_REAL_PRODUCT_NOT_VALIDATED",
-            "EOS04_PRODUCT_EXPOSURE_DISABLED",
-        ),
+        # Accepted after the 2026-07-18 approved-runtime MRS L2B validation.
+        # Product/UI exposure remains a separately gated BFF responsibility.
+        validation_state="accepted",
+        readiness_reasons=(),
         validation_profile=settings.eos04_profile_version,
         cadence_class="revisit_12d",
         host_pool="akasha-staging",
