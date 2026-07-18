@@ -22,7 +22,7 @@ from akasha.storage.object_store import file_sha256
 EOS04_SOURCE_ID = "eos-04-sar-mrs-l2b"
 EOS04_COLLECTION_ID = "EOS-04_SAR-MRS_L2B"
 EOS04_PGSTAC_COLLECTION_ID = "akasha-eos-04-sar-mrs-l2b-backscatter-v1"
-EOS04_PROCESSING_PROFILE_VERSION = "eos04-sar-mrs-l2b-gamma0-v2"
+EOS04_PROCESSING_PROFILE_VERSION = "eos04-sar-mrs-l2b-gamma0-v3"
 EOS04_NODATA = -9999.0
 EOS04_DEFAULT_RESCALE = "-25,5"
 EOS04_VALID_MASK_VALUE = 128

@@ -105,7 +105,7 @@ def _client(*, cog: bytes | None = None) -> TestClient:
             nodata_value=-9999.0,
             metadata={
                 "polarizations": ["HH", "HV"],
-                "processing_profile_version": "eos04-sar-mrs-l2b-gamma0-v2",
+                "processing_profile_version": "eos04-sar-mrs-l2b-gamma0-v3",
             },
         )
     )
@@ -123,7 +123,7 @@ def _comparison_metadata() -> dict:
         "instrumentMode": "MRS",
         "productType": "L2B-ARD-PRODUCT",
         "processingLevel": "STD",
-        "processingProfileVersion": "eos04-sar-mrs-l2b-gamma0-v2",
+        "processingProfileVersion": "eos04-sar-mrs-l2b-gamma0-v3",
         "providerSoftwareVersion": "1.2.00",
         "calibrationFormula": "formula-v2",
         "outputScale": "db",
