@@ -88,6 +88,124 @@ def raster_stats(
         return stats, class_stats
 
 
+def sar_field_stats(
+    source: RasterSource,
+    *,
+    geometry: dict[str, Any],
+    band_names: list[str],
+    encoded_nodata: int | float | None,
+) -> dict[str, Any]:
+    """Return robust exact-field statistics for a calibrated multi-band SAR COG."""
+
+    with open_raster(source) as dataset:
+        dataset_geometry = _geometry_for_dataset(dataset, geometry)
+        window = _polygon_window(dataset, dataset_geometry)
+        if window is None:
+            return {
+                "fieldPixelCount": 0,
+                "validPixelCount": 0,
+                "coveragePercent": 0.0,
+                "bands": [],
+                "features": {},
+            }
+        values = dataset.read(window=window).astype("float64")
+        field_mask = geometry_mask(
+            [dataset_geometry],
+            out_shape=values.shape[1:],
+            transform=dataset.window_transform(window),
+            invert=True,
+        )
+        field_pixels = int(field_mask.sum())
+        if field_pixels <= 0:
+            return {
+                "fieldPixelCount": 0,
+                "validPixelCount": 0,
+                "coveragePercent": 0.0,
+                "bands": [],
+                "features": {},
+            }
+
+        resolved_nodata = dataset.nodata if dataset.nodata is not None else encoded_nodata
+        # Evidence is qualified only where every advertised polarization is valid.
+        # This prevents one healthy band from hiding gaps in another band used by a
+        # cross-polarization feature such as HH-HV or VV-VH.
+        common_valid = field_mask.copy()
+        bands: list[dict[str, Any]] = []
+        medians: dict[str, float] = {}
+        for offset in range(values.shape[0]):
+            band = values[offset]
+            valid = field_mask & np.isfinite(band)
+            if resolved_nodata is not None:
+                valid &= band != float(resolved_nodata)
+            common_valid &= valid
+            selected = band[valid]
+            polarization = (
+                str(band_names[offset]).upper() if offset < len(band_names) else f"B{offset + 1}"
+            )
+            stats = _sar_band_stats(
+                polarization,
+                selected,
+                field_pixel_count=field_pixels,
+            )
+            bands.append(stats)
+            if stats["median"] is not None:
+                medians[polarization] = float(stats["median"])
+
+        valid_pixels = int(common_valid.sum())
+        features: dict[str, float] = {}
+        if "HH" in medians and "HV" in medians:
+            features["HH_MINUS_HV_DB"] = medians["HH"] - medians["HV"]
+        if "VV" in medians and "VH" in medians:
+            features["VV_MINUS_VH_DB"] = medians["VV"] - medians["VH"]
+        return {
+            "fieldPixelCount": field_pixels,
+            "validPixelCount": valid_pixels,
+            "coveragePercent": _percentage(valid_pixels, field_pixels),
+            "bands": bands,
+            "features": features,
+        }
+
+
+def _sar_band_stats(
+    polarization: str,
+    selected: NDArray[np.floating],
+    *,
+    field_pixel_count: int,
+) -> dict[str, Any]:
+    if selected.size == 0:
+        return {
+            "polarization": polarization,
+            "min": None,
+            "max": None,
+            "mean": None,
+            "median": None,
+            "stdDev": None,
+            "p10": None,
+            "p25": None,
+            "p75": None,
+            "p90": None,
+            "validPixelCount": 0,
+            "validPixelPercent": 0.0,
+            "unit": "dB",
+        }
+    percentiles = np.percentile(selected, [10, 25, 75, 90])
+    return {
+        "polarization": polarization,
+        "min": float(np.min(selected)),
+        "max": float(np.max(selected)),
+        "mean": float(np.mean(selected)),
+        "median": float(np.median(selected)),
+        "stdDev": float(np.std(selected)),
+        "p10": float(percentiles[0]),
+        "p25": float(percentiles[1]),
+        "p75": float(percentiles[2]),
+        "p90": float(percentiles[3]),
+        "validPixelCount": int(selected.size),
+        "validPixelPercent": _percentage(selected.size, field_pixel_count),
+        "unit": "dB",
+    }
+
+
 def categorical_mask_stats(
     source: RasterSource,
     *,

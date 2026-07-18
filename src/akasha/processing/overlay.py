@@ -125,6 +125,8 @@ def render_clipped_index_overlay(
     nodata: int | float | None,
     supersample: int = _DEFAULT_SUPERSAMPLE,
     max_dim: int = _DEFAULT_MAX_DIM,
+    band_index: int = 1,
+    display_range: tuple[float, float] | None = None,
 ) -> tuple[bytes, list[list[float]] | None]:
     """Render a polygon-clipped, Web-Mercator index overlay PNG.
 
@@ -157,7 +159,9 @@ def render_clipped_index_overlay(
         if full.width <= 0 or full.height <= 0:
             return TRANSPARENT_PNG, None
 
-        band = dataset.read(1, window=full).astype("float64")
+        if band_index < 1 or band_index > dataset.count:
+            raise ValueError("band_index is outside the raster band range")
+        band = dataset.read(band_index, window=full).astype("float64")
         win_transform = dataset.window_transform(full)
         ds_nodata = dataset.nodata
 
@@ -224,8 +228,15 @@ def render_clipped_index_overlay(
     rgba = np.zeros((out_h, out_w, 4), dtype=np.uint8)
     valid_b = poly & (out_valid >= 0.5) & np.isfinite(out_index)
     if np.any(valid_b):
-        # Pipeline overlays are NDVI only; use the reference legend palette.
-        rgb = _ndvi_palette(out_index)
+        if display_range is None:
+            rgb = _ndvi_palette(out_index)
+        else:
+            low, high = display_range
+            if high <= low:
+                raise ValueError("display_range maximum must exceed minimum")
+            normalized = np.clip((out_index - low) / (high - low), 0.0, 1.0)
+            gray = np.asarray(np.rint(normalized * 255.0), dtype=np.uint8)
+            rgb = np.repeat(gray[..., np.newaxis], 3, axis=2)
         rgba[valid_b, :3] = rgb[valid_b]
         rgba[valid_b, 3] = 255
 
@@ -240,3 +251,24 @@ def render_clipped_index_overlay(
     )
     corners = [[round(float(x), 10), round(float(y), 10)] for x, y in zip(xs, ys, strict=True)]
     return _rgba_png(out_w, out_h, rgba.tobytes()), corners
+
+
+def render_clipped_sar_overlay(
+    source: RasterSource,
+    *,
+    geometry: dict[str, Any],
+    band_index: int,
+    nodata: int | float | None,
+    display_range: tuple[float, float] = (-25.0, 5.0),
+) -> tuple[bytes, list[list[float]] | None]:
+    """Render calibrated SAR dB values only inside the requested field polygon."""
+
+    return render_clipped_index_overlay(
+        source,
+        geometry=geometry,
+        index_name="SAR_BACKSCATTER",
+        scale_factor=None,
+        nodata=nodata,
+        band_index=band_index,
+        display_range=display_range,
+    )

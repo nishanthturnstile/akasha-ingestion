@@ -280,6 +280,87 @@ class FieldDatesResponse(BaseModel):
     dates: list[FieldDateAvailability]
 
 
+class FieldSarRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    geometry: dict[str, Any]
+    sourceId: Literal["eos-04-sar-mrs-l2b"] = "eos-04-sar-mrs-l2b"
+    crs: Literal["EPSG:4326"] = "EPSG:4326"
+    fieldId: str | None = Field(default=None, min_length=1)
+    targetDate: date
+    windowDays: int = Field(default=21, ge=1, le=31)
+    minimumCoveragePercent: float = Field(default=95.0, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def validate_geometry(self) -> Self:
+        geometry_type = self.geometry.get("type")
+        if geometry_type not in {"Polygon", "MultiPolygon"}:
+            raise ValueError("geometry must be a Polygon or MultiPolygon")
+        coordinates = self.geometry.get("coordinates")
+        if not isinstance(coordinates, list) or not coordinates:
+            raise ValueError("geometry coordinates are required")
+        return self
+
+
+class FieldSarBandStatistics(BaseModel):
+    polarization: str
+    min: float | None = None
+    max: float | None = None
+    mean: float | None = None
+    median: float | None = None
+    stdDev: float | None = None
+    p10: float | None = None
+    p25: float | None = None
+    p75: float | None = None
+    p90: float | None = None
+    validPixelCount: int = Field(default=0, ge=0)
+    validPixelPercent: float = Field(default=0.0, ge=0, le=100)
+    unit: Literal["dB"] = "dB"
+
+
+class FieldSarQuality(BaseModel):
+    qualified: bool
+    confidence: Literal["none", "low", "medium", "high"]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FieldSarAvailableResponse(BaseModel):
+    status: Literal["AVAILABLE"] = "AVAILABLE"
+    queryId: str
+    fieldId: str | None = None
+    sourceId: Literal["eos-04-sar-mrs-l2b"] = "eos-04-sar-mrs-l2b"
+    requestedDate: date
+    acquisitionDate: date
+    daysFromTarget: int
+    coveragePercent: float = Field(ge=0, le=100)
+    validPixelCount: int = Field(ge=1)
+    fieldPixelCount: int = Field(ge=1)
+    polarizations: list[str] = Field(min_length=1)
+    displayedPolarization: str
+    bands: list[FieldSarBandStatistics] = Field(min_length=1)
+    features: dict[str, float] = Field(default_factory=dict)
+    quality: FieldSarQuality
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    overlayUrl: str
+
+
+class FieldSarUnavailableResponse(BaseModel):
+    status: Literal["UNAVAILABLE"] = "UNAVAILABLE"
+    fieldId: str | None = None
+    sourceId: Literal["eos-04-sar-mrs-l2b"] = "eos-04-sar-mrs-l2b"
+    requestedDate: date
+    reasonCode: Literal[
+        "no_scene",
+        "no_overlap",
+        "low_coverage",
+        "processing_unavailable",
+    ]
+    reason: str
+
+
+FieldSarResponse = FieldSarAvailableResponse | FieldSarUnavailableResponse
+
+
 class FieldIndexUnavailableResponse(BaseModel):
     status: Literal["UNAVAILABLE"] = "UNAVAILABLE"
     index: str
