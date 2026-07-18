@@ -12,9 +12,20 @@ from akasha.jobs.stage_store import InMemoryStageStore, StageStatus
 from akasha.jobs.store import InMemoryJobStore
 from akasha.processing.eos04 import EOS04_SOURCE_ID, PreparedEos04Scene
 from akasha.providers.bhoonidhi import BhoonidhiCandidate
+from akasha.scheduler.source_registry import eos04_source_state
 from akasha.schemas import SyncRequest
 from akasha.services.eos04_ingestion import Eos04IngestionService
 from akasha.storage.object_store import InMemoryObjectStore
+
+
+def test_eos04_runtime_source_is_validated_but_remains_manual_and_hidden() -> None:
+    source = eos04_source_state(Settings(environment=Environment.TEST))
+
+    assert source.validation_state == "accepted"
+    assert source.readiness_reasons == ()
+    assert source.lifecycle_state == "manual"
+    assert source.schedule_state == "manual"
+    assert source.product_exposure == "hidden"
 
 
 def test_eos04_full_pipeline_is_bounded_idempotent_and_catalogs_backscatter(
