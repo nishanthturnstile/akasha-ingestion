@@ -46,6 +46,8 @@ from akasha.schemas import (
     FieldIndexPointResponse,
     FieldIndexRequest,
     FieldIndexResponse,
+    FieldSarRequest,
+    FieldSarResponse,
     HealthResponse,
     JobResponse,
     SourceDatesResponse,
@@ -435,6 +437,31 @@ def create_app(
             ) from exc
         return APIResponse(success=True, data=result)
 
+    @app.post(
+        "/api/v1/analytics/field-sar",
+        response_model=APIResponse[FieldSarResponse],
+        dependencies=[auth_dependency],
+        responses=API_ERROR_RESPONSES | VALIDATION_ERROR_RESPONSE,
+    )
+    def field_sar(
+        request: Request,
+        payload: FieldSarRequest,
+    ) -> APIResponse[FieldSarResponse]:
+        service_obj: AnalyticsService = request.app.state.analytics_service
+        try:
+            result = service_obj.field_sar(payload)
+        except AnalyticsRasterUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+        return APIResponse(success=True, data=result)
+
     @app.get(
         "/api/v1/analytics/readiness",
         response_model=APIResponse[AnalyticsReadinessResponse],
@@ -621,6 +648,54 @@ def create_app(
             )
         try:
             result = service_obj.overlay_for_query(query_id)
+        except AnalyticsRasterNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except AnalyticsRasterUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        if result is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="query not found")
+        png_bytes, corners = result
+        headers = {}
+        if corners is not None:
+            headers["X-Akasha-Overlay-Corners"] = json.dumps(corners, separators=(",", ":"))
+        return Response(content=png_bytes, media_type="image/png", headers=headers)
+
+    @app.get(
+        "/api/v1/analytics/field-sar/{query_id}/overlay.png",
+        responses=API_ERROR_RESPONSES,
+    )
+    def field_sar_overlay(
+        request: Request,
+        query_id: str,
+        op: str,
+        exp: int,
+        kid: str,
+        sig: str,
+    ) -> Response:
+        if op != "sar_overlay":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="wrong operation")
+        service_obj: AnalyticsService = request.app.state.analytics_service
+        signing = service_obj._signing
+        query_hash = signing.query_hash(f"{query_id}:sar_overlay")
+        if not signing.verify(
+            method="GET",
+            operation="sar_overlay",
+            resource_id=query_id,
+            path_template=f"/api/v1/analytics/field-sar/{query_id}/overlay.png",
+            geometry_or_query_hash=query_hash,
+            expires_at=exp,
+            key_id=kid,
+            signature=sig,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="invalid signature",
+            )
+        try:
+            result = service_obj.sar_overlay_for_query(query_id)
         except AnalyticsRasterNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except AnalyticsRasterUnavailable as exc:

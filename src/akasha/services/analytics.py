@@ -12,8 +12,9 @@ from akasha.catalog.raster_repository import RasterOutputRecord
 from akasha.catalog.scene_repository import ProviderSceneRecord
 from akasha.catalog.tile_layer_repository import TileLayerRecord
 from akasha.config import Settings
+from akasha.processing.eos04 import EOS04_PROCESSING_PROFILE_VERSION, EOS04_SOURCE_ID
 from akasha.processing.raster_source import RasterSource, open_raster
-from akasha.processing.raster_stats import categorical_mask_stats, raster_stats
+from akasha.processing.raster_stats import categorical_mask_stats, raster_stats, sar_field_stats
 from akasha.processing.resourcesat import (
     RESOURCESAT_FORMULA_VERSION,
     RESOURCESAT_MASK_METHOD,
@@ -35,6 +36,12 @@ from akasha.schemas import (
     FieldIndexStatistics,
     FieldIndexUnavailableResponse,
     FieldIndexVisualization,
+    FieldSarAvailableResponse,
+    FieldSarBandStatistics,
+    FieldSarQuality,
+    FieldSarRequest,
+    FieldSarResponse,
+    FieldSarUnavailableResponse,
 )
 from akasha.services.signing import SigningService
 from akasha.storage.object_store import ObjectStoreNotFoundError, ObjectStoreReadError
@@ -332,6 +339,241 @@ class AnalyticsService:
             dates=results,
         )
 
+    def field_sar(self, request: FieldSarRequest) -> FieldSarResponse:
+        """Resolve calibrated EOS-04 evidence for one exact field geometry."""
+
+        self._validate_geometry_limits(request)
+        if request.sourceId != EOS04_SOURCE_ID:
+            raise ValueError(f"unsupported SAR source_id: {request.sourceId}")
+        if not self._has_sar_dependencies():
+            return self._sar_unavailable(
+                request,
+                "processing_unavailable",
+                "Field-SAR dependencies are not configured.",
+            )
+
+        candidates = self._scene_repository.list_candidates(
+            source_id=request.sourceId,
+            requested_date=request.targetDate,
+            window_days=request.windowDays,
+            max_cloud_percentage=100,
+            limit=min(12, self._settings.max_candidate_scenes),
+        )
+        candidates = [
+            scene
+            for scene in candidates
+            if scene.status == "accepted" and scene.acquisition_at is not None and scene.id
+        ]
+        if not candidates:
+            return self._sar_unavailable(
+                request,
+                "no_scene",
+                "No accepted EOS-04 scene is available within the support window.",
+            )
+
+        observed_overlap = False
+        observed_low_coverage = False
+        raster_failures = 0
+        options: list[tuple[object, object, dict[str, object]]] = []
+        for scene in candidates:
+            asset = self._backscatter_asset(scene.id or "")
+            if asset is None:
+                continue
+            object_path = asset.mirror_object_path or asset.object_path
+            if not object_path:
+                continue
+            polarizations = [
+                str(value).upper() for value in asset.metadata.get("polarizations", []) if value
+            ]
+            if not polarizations:
+                continue
+            try:
+                stats = sar_field_stats(
+                    self._object_store.raster_source(object_path),
+                    geometry=request.geometry,
+                    band_names=polarizations,
+                    encoded_nodata=asset.nodata_value,
+                )
+            except (ObjectStoreNotFoundError, ObjectStoreReadError, RasterioError):
+                raster_failures += 1
+                continue
+            if int(stats["fieldPixelCount"]) <= 0:
+                continue
+            observed_overlap = True
+            if float(stats["coveragePercent"]) < request.minimumCoveragePercent:
+                observed_low_coverage = True
+                continue
+            options.append((scene, asset, stats))
+
+        if not options:
+            if raster_failures:
+                return self._sar_unavailable(
+                    request,
+                    "processing_unavailable",
+                    "EOS-04 field backscatter is temporarily unavailable.",
+                )
+            if observed_low_coverage:
+                return self._sar_unavailable(
+                    request,
+                    "low_coverage",
+                    "EOS-04 overlaps the field but does not meet the coverage requirement.",
+                )
+            return self._sar_unavailable(
+                request,
+                "no_overlap" if not observed_overlap else "no_scene",
+                "No qualifying EOS-04 observation overlaps this exact field.",
+            )
+
+        scene, asset, stats = min(
+            options,
+            key=lambda value: (
+                abs((value[0].acquisition_at.date() - request.targetDate).days),
+                -float(value[2]["coveragePercent"]),
+                value[0].provider_product_id,
+            ),
+        )
+        acquisition_date = scene.acquisition_at.date()
+        days_from_target = (acquisition_date - request.targetDate).days
+        polarizations = [
+            str(value).upper() for value in asset.metadata.get("polarizations", []) if value
+        ]
+        displayed = polarizations[0]
+        confidence = _sar_confidence(days_from_target, float(stats["coveragePercent"]))
+        query_id = new_query_id()
+        overlay_template = f"/api/v1/analytics/field-sar/{query_id}/overlay.png"
+        overlay_ref = self._signing.sign(
+            method="GET",
+            operation="sar_overlay",
+            resource_id=query_id,
+            path_template=overlay_template,
+            geometry_or_query_hash=self._signing.query_hash(f"{query_id}:sar_overlay"),
+        )
+        provenance = {
+            "platform": "EOS-04",
+            "provider": "ISRO/NRSC Bhoonidhi",
+            "productLevel": "L2B",
+            "processingFamily": "sar_backscatter",
+            "processingProfileVersion": asset.metadata.get(
+                "processing_profile_version", EOS04_PROCESSING_PROFILE_VERSION
+            ),
+            "unit": "dB",
+            "pixelSpacingMeters": scene.native_resolution,
+            "polarizationOrder": polarizations,
+            "rtcApplied": True,
+        }
+        self._field_query_repository.save(
+            FieldQueryRecord(
+                query_id=query_id,
+                field_geometry=request.geometry,
+                index_name=f"sar_backscatter:{displayed}",
+                requested_date=request.targetDate,
+                selected_scene_id=scene.id,
+                valid_pixel_count=int(stats["validPixelCount"]),
+                selection_reason="nearest_qualified_eos04_field_observation",
+                stats_json={
+                    **stats,
+                    "acquisitionDate": acquisition_date.isoformat(),
+                    "daysFromTarget": days_from_target,
+                    "polarizations": polarizations,
+                    "displayedPolarization": displayed,
+                    "provenance": provenance,
+                },
+                quality_json={
+                    "qualified": True,
+                    "confidence": confidence,
+                    "warnings": [],
+                },
+            )
+        )
+        return FieldSarAvailableResponse(
+            queryId=query_id,
+            fieldId=request.fieldId,
+            requestedDate=request.targetDate,
+            acquisitionDate=acquisition_date,
+            daysFromTarget=days_from_target,
+            coveragePercent=float(stats["coveragePercent"]),
+            validPixelCount=int(stats["validPixelCount"]),
+            fieldPixelCount=int(stats["fieldPixelCount"]),
+            polarizations=polarizations,
+            displayedPolarization=displayed,
+            bands=[FieldSarBandStatistics.model_validate(value) for value in stats["bands"]],
+            features={key: float(value) for key, value in stats["features"].items()},
+            quality=FieldSarQuality(
+                qualified=True,
+                confidence=confidence,
+                warnings=[],
+            ),
+            provenance=provenance,
+            overlayUrl=(
+                f"{self._settings.public_base_url}{overlay_template}"
+                f"?{overlay_ref.query_string()}"
+            ),
+        )
+
+    def sar_overlay_for_query(
+        self,
+        query_id: str,
+    ) -> tuple[bytes, list[list[float]] | None] | None:
+        from akasha.processing.overlay import render_clipped_sar_overlay
+
+        record = self._field_query_repository.get(query_id)
+        if (
+            record is None
+            or not record.index_name.startswith("sar_backscatter:")
+            or not record.selected_scene_id
+        ):
+            return None
+        asset = self._backscatter_asset(record.selected_scene_id)
+        if asset is None or self._object_store is None:
+            return None
+        object_path = asset.mirror_object_path or asset.object_path
+        if not object_path:
+            return None
+        polarizations = [
+            str(value).upper() for value in asset.metadata.get("polarizations", []) if value
+        ]
+        displayed = record.index_name.partition(":")[2].upper()
+        if displayed not in polarizations:
+            return None
+        try:
+            return render_clipped_sar_overlay(
+                self._object_store.raster_source(object_path),
+                geometry=record.field_geometry,
+                band_index=polarizations.index(displayed) + 1,
+                nodata=asset.nodata_value,
+            )
+        except ObjectStoreNotFoundError as exc:
+            raise AnalyticsRasterNotFound("SAR backscatter was not found.") from exc
+        except (ObjectStoreReadError, RasterioError) as exc:
+            raise AnalyticsRasterUnavailable(
+                "SAR backscatter is temporarily unavailable."
+            ) from exc
+
+    def _backscatter_asset(self, scene_id: str):
+        if self._asset_repository is None:
+            return None
+        return next(
+            (
+                asset
+                for asset in self._asset_repository.list_for_scene(scene_id)
+                if asset.asset_key == "backscatter"
+            ),
+            None,
+        )
+
+    def _sar_unavailable(
+        self,
+        request: FieldSarRequest,
+        reason_code: str,
+        reason: str,
+    ) -> FieldSarUnavailableResponse:
+        return FieldSarUnavailableResponse(
+            fieldId=request.fieldId,
+            requestedDate=request.targetDate,
+            reasonCode=reason_code,
+            reason=reason,
+        )
+
     def _candidate_options(
         self,
         request: FieldIndexRequest,
@@ -597,6 +839,17 @@ class AnalyticsService:
             )
         )
 
+    def _has_sar_dependencies(self) -> bool:
+        return all(
+            value is not None
+            for value in (
+                self._scene_repository,
+                self._asset_repository,
+                self._object_store,
+                self._field_query_repository,
+            )
+        )
+
     def _validate_geometry_limits(self, request: FieldIndexRequest) -> None:
         try:
             geometry = shape(request.geometry)
@@ -619,6 +872,17 @@ def _vertex_count(geometry: dict) -> int:
     if geometry_type == "MultiPolygon":
         return sum(len(ring) for polygon in coordinates for ring in polygon)
     return 0
+
+
+def _sar_confidence(days_from_target: int, coverage_percent: float) -> str:
+    offset = abs(days_from_target)
+    if offset <= 3 and coverage_percent >= 95.0:
+        return "high"
+    if offset <= 7 and coverage_percent >= 95.0:
+        return "medium"
+    if offset <= 12 and coverage_percent >= 95.0:
+        return "low"
+    return "none"
 
 
 def _field_index_window_days(source_id: str, settings: Settings) -> int:
