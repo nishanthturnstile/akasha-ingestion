@@ -187,6 +187,7 @@ def build_eos04_backscatter_item(
     ]
     if not polarizations:
         raise ValueError("EOS-04 STAC item requires explicit sar:polarizations")
+    comparison = dict(scene.provider_metadata.get("comparison_metadata") or {})
     item_id = scene.pgstac_item_id or _eos04_item_id(scene)
     item = _base_derived_item(
         scene=scene,
@@ -207,6 +208,14 @@ def build_eos04_backscatter_item(
             "akasha:logical_scene_key": scene.logical_scene_key,
             "akasha:aoi_id": scene.aoi_id,
             "akasha:processing_profile_version": EOS04_PROCESSING_PROFILE_VERSION,
+            "akasha:comparison_policy_version": comparison.get("policyVersion"),
+            "akasha:comparison_key_hash": comparison.get("keyHash"),
+            "akasha:comparison_metadata_complete": bool(comparison.get("complete")),
+            "akasha:orbit_state": comparison.get("orbitState"),
+            "akasha:track_key": comparison.get("trackKey"),
+            "akasha:incidence_angle_degrees": comparison.get("incidenceAngleDegrees"),
+            "akasha:sensor_orientation": comparison.get("sensorOrientation"),
+            "akasha:rtc_applied": comparison.get("rtcApplied"),
             "akasha:display_only": True,
         },
     )

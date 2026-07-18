@@ -158,6 +158,17 @@ def _prepare(root: Path):
                     "10*log10(DN^2-IMAGE_NOISE_BIAS)-KCAL_BETA0_DB"
                 ),
                 "output_scale": "db",
+                "rtc_apply_flag": 1,
+                "comparison_metadata": {
+                    "policyVersion": "eos04-comparability-v1",
+                    "keyHash": "fixture-comparison-key",
+                    "complete": True,
+                    "orbitState": "DESCENDING",
+                    "trackKey": "scene:22",
+                    "incidenceAngleDegrees": 37.8,
+                    "sensorOrientation": "RIGHT",
+                    "rtcApplied": True,
+                },
             },
         )
 

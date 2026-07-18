@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from json import dumps
 
 from pyproj import Geod
 from rasterio.errors import RasterioError
@@ -21,6 +23,7 @@ from akasha.processing.resourcesat import (
     RESOURCESAT_PROFILES,
     has_exact_date_composite_provenance,
 )
+from akasha.processing.sar_temporal import build_sar_temporal_analysis
 from akasha.processing.sentinel2 import SENTINEL2_FORMULA_VERSION, SENTINEL2_INDEX_ASSETS
 from akasha.schemas import (
     FieldDateAvailability,
@@ -343,6 +346,7 @@ class AnalyticsService:
         """Resolve calibrated EOS-04 evidence for one exact field geometry."""
 
         self._validate_geometry_limits(request)
+        self._field_query_repository.delete_expired(limit=100)
         if request.sourceId != EOS04_SOURCE_ID:
             raise ValueError(f"unsupported SAR source_id: {request.sourceId}")
         if not self._has_sar_dependencies():
@@ -461,6 +465,11 @@ class AnalyticsService:
             "polarizationOrder": polarizations,
             "rtcApplied": True,
         }
+        temporal = (
+            self._field_sar_temporal(request=request, current_scene=scene, current_stats=stats)
+            if request.includeHistory
+            else {}
+        )
         self._field_query_repository.save(
             FieldQueryRecord(
                 query_id=query_id,
@@ -483,6 +492,12 @@ class AnalyticsService:
                     "confidence": confidence,
                     "warnings": [],
                 },
+                expires_at=datetime.now(UTC)
+                + timedelta(seconds=self._settings.field_query_ttl_seconds),
+                geometry_hash=self._signing.query_hash(
+                    dumps(request.geometry, sort_keys=True, separators=(",", ":"))
+                ),
+                analysis_version="sar-field-evidence-v1",
             )
         )
         return FieldSarAvailableResponse(
@@ -508,6 +523,7 @@ class AnalyticsService:
                 f"{self._settings.public_base_url}{overlay_template}"
                 f"?{overlay_ref.query_string()}"
             ),
+            **temporal,
         )
 
     def sar_overlay_for_query(
@@ -560,6 +576,132 @@ class AnalyticsService:
             ),
             None,
         )
+
+    def _field_sar_temporal(
+        self,
+        *,
+        request: FieldSarRequest,
+        current_scene: ProviderSceneRecord,
+        current_stats: dict[str, object],
+    ) -> dict[str, object]:
+        current_metadata = dict(
+            current_scene.provider_metadata.get("comparison_metadata") or {}
+        )
+        if current_scene.acquisition_at is None:
+            return build_sar_temporal_analysis(
+                current_metadata=current_metadata,
+                current_stats=current_stats,
+                prior_observations=[],
+                minimum_baseline_observations=request.minimumBaselineObservations,
+            )
+        end_date = current_scene.acquisition_at.date() - timedelta(days=1)
+        start_date = end_date - timedelta(days=request.historyLookbackDays - 1)
+        candidates = self._scene_repository.list_range(
+            source_id=request.sourceId,
+            start_date=start_date,
+            end_date=end_date,
+            limit=min(
+                request.maximumHistoryObservations * 3,
+                self._settings.max_candidate_scenes,
+            ),
+        )
+        observations: list[dict[str, object]] = []
+        for scene in candidates:
+            if len(observations) >= request.maximumHistoryObservations:
+                break
+            if scene.status != "accepted" or scene.acquisition_at is None or not scene.id:
+                continue
+            asset = self._backscatter_asset(scene.id)
+            if asset is None:
+                continue
+            object_path = asset.mirror_object_path or asset.object_path
+            polarizations = [
+                str(value).upper()
+                for value in asset.metadata.get("polarizations", [])
+                if value
+            ]
+            if not object_path or not polarizations:
+                continue
+            try:
+                stats = self._cached_sar_history_stats(
+                    request=request,
+                    scene=scene,
+                    asset=asset,
+                    object_path=object_path,
+                    polarizations=polarizations,
+                )
+            except (ObjectStoreNotFoundError, ObjectStoreReadError, RasterioError):
+                continue
+            if (
+                int(stats["fieldPixelCount"]) <= 0
+                or float(stats["coveragePercent"]) < request.minimumCoveragePercent
+            ):
+                continue
+            observations.append(
+                {
+                    "acquisitionDate": scene.acquisition_at.date().isoformat(),
+                    "comparisonMetadata": dict(
+                        scene.provider_metadata.get("comparison_metadata") or {}
+                    ),
+                    "stats": stats,
+                    "quality": {"qualified": True, "confidence": "high", "warnings": []},
+                }
+            )
+        return build_sar_temporal_analysis(
+            current_metadata=current_metadata,
+            current_stats=current_stats,
+            prior_observations=observations,
+            minimum_baseline_observations=request.minimumBaselineObservations,
+        )
+
+    def _cached_sar_history_stats(
+        self,
+        *,
+        request: FieldSarRequest,
+        scene: ProviderSceneRecord,
+        asset: object,
+        object_path: str,
+        polarizations: list[str],
+    ) -> dict[str, object]:
+        geometry_hash = self._signing.query_hash(
+            dumps(request.geometry, sort_keys=True, separators=(",", ":"))
+        )
+        analysis_version = (
+            f"sar-field-stats-v1:{','.join(polarizations)}:"
+            f"coverage-{request.minimumCoveragePercent:g}"
+        )
+        cached = self._field_query_repository.find_cached(
+            selected_scene_id=scene.id or "",
+            geometry_hash=geometry_hash,
+            index_name="sar_backscatter:history",
+            analysis_version=analysis_version,
+        )
+        if cached is not None:
+            return dict(cached.stats_json)
+        stats = sar_field_stats(
+            self._object_store.raster_source(object_path),
+            geometry=request.geometry,
+            band_names=polarizations,
+            encoded_nodata=asset.nodata_value,
+        )
+        self._field_query_repository.save(
+            FieldQueryRecord(
+                query_id=new_query_id(),
+                field_geometry=request.geometry,
+                index_name="sar_backscatter:history",
+                requested_date=scene.acquisition_at.date(),
+                selected_scene_id=scene.id,
+                valid_pixel_count=int(stats["validPixelCount"]),
+                selection_reason="cached_eos04_field_history_observation",
+                stats_json=stats,
+                quality_json={"qualified": True},
+                expires_at=datetime.now(UTC)
+                + timedelta(seconds=self._settings.field_query_ttl_seconds),
+                geometry_hash=geometry_hash,
+                analysis_version=analysis_version,
+            )
+        )
+        return stats
 
     def _sar_unavailable(
         self,

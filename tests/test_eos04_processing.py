@@ -135,6 +135,18 @@ def _l2b_archive(
             "ImagingMode=MRS",
             f"RTC_Apply_Flag={rtc_apply_flag}",
             "Missing_Frames_Flag=0",
+            "ProcessingLevel=STD",
+            "SOFTWARE_VERSION=1.2.00",
+            "DEMCorrection=YES",
+            "DEMSource=COPERNICUS30",
+            "SensorOrientation=RIGHT",
+            "PassType=NA",
+            "SatelliteHeadingAngle=190.58",
+            "SceneNumber=22",
+            "IncidenceAngle=37.86",
+            "OutputPixelSpacing=18.0",
+            "SceneStartTime=17-JUL-2026 00:40:49.740000000",
+            "SceneEndTime=17-JUL-2026 00:41:12.370000000",
             f"NoOfPolarizations={len(polarizations)}",
         ]
         for index, polarization in enumerate(polarizations, start=1):

@@ -15,6 +15,7 @@ from rasterio.warp import transform_bounds
 from akasha.config import Settings, validate_resourcesat_runtime_roots
 from akasha.processing.cog import translate_cog_file, validate_cog
 from akasha.processing.resourcesat_prepare import safe_extract_product
+from akasha.processing.sar_comparability import normalize_eos04_comparison_metadata
 from akasha.providers.contracts import ProviderErrorCategory
 from akasha.storage.object_store import file_sha256
 
@@ -168,6 +169,15 @@ def prepare_eos04_product(
         bbox = _wgs84_bounds(output_path)
         geometry = product.geometry or _bbox_geometry(bbox)
         checksum = file_sha256(output_path)
+        calibration_formula = "10*log10(DN^2-IMAGE_NOISE_BIAS)-KCAL_BETA0_DB"
+        comparison_metadata = normalize_eos04_comparison_metadata(
+            assets.metadata,
+            polarizations=assets.polarizations,
+            processing_profile_version=EOS04_PROCESSING_PROFILE_VERSION,
+            calibration_formula=calibration_formula,
+            output_scale="db",
+            resolution_meters=float(raster_metadata["resolution"]),
+        )
         manifest = {
             "schema_version": "eos04-sar-prepare-v2",
             "source_id": EOS04_SOURCE_ID,
@@ -182,7 +192,7 @@ def prepare_eos04_product(
             ),
             "processing_profile_version": EOS04_PROCESSING_PROFILE_VERSION,
             "input_representation": "uint16_gamma0_dn",
-            "calibration_formula": "10*log10(DN^2-IMAGE_NOISE_BIAS)-KCAL_BETA0_DB",
+            "calibration_formula": calibration_formula,
             "output_scale": "db",
             "valid_mask_value": EOS04_VALID_MASK_VALUE,
             "rtc_apply_flag": int(assets.metadata["RTC_Apply_Flag"]),
@@ -192,6 +202,7 @@ def prepare_eos04_product(
             "sar:polarizations": list(assets.polarizations),
             "calibration_constants_db": assets.calibration_constants_db,
             "noise_bias": assets.noise_bias,
+            "comparison_metadata": comparison_metadata,
             "bbox": bbox,
             "geometry": geometry,
             "crs": raster_metadata["crs"],

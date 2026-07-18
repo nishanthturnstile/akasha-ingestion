@@ -176,6 +176,7 @@ class Settings(BaseSettings):
     field_max_area_sq_km: float = Field(default=25.0, gt=0)
     field_min_usable_pixels: int = Field(default=1, gt=0)
     max_candidate_scenes: int = Field(default=20, gt=0)
+    field_query_ttl_seconds: int = Field(default=86_400, ge=300, le=604_800)
     backfill_search_item_cap: int = Field(default=1000, gt=0)
     field_usable_pixel_threshold: float = Field(default=0.80, ge=0, le=1)
     field_max_cloud_percentage: float = Field(default=20.0, ge=0, le=20)

@@ -380,6 +380,8 @@ class Eos04IngestionService:
                     "calibration_formula": prepared.manifest["calibration_formula"],
                     "output_scale": "db",
                     "bbox": prepared.bbox,
+                    "comparison_metadata": prepared.manifest["comparison_metadata"],
+                    "comparison_key_hash": prepared.manifest["comparison_metadata"]["keyHash"],
                 },
                 aoi_id=job.aoi_id,
                 provider_route_id=route_id,
@@ -407,6 +409,13 @@ class Eos04IngestionService:
                 metadata={
                     "polarizations": list(prepared.polarizations),
                     "unit": "dB",
+                    "processing_profile_version": EOS04_PROCESSING_PROFILE_VERSION,
+                    "calibration_formula": prepared.manifest["calibration_formula"],
+                    "rtc_applied": prepared.manifest["rtc_apply_flag"] == 1,
+                    "comparison_policy_version": prepared.manifest["comparison_metadata"][
+                        "policyVersion"
+                    ],
+                    "comparison_key_hash": prepared.manifest["comparison_metadata"]["keyHash"],
                     "bbox": prepared.bbox,
                     "geometry": prepared.geometry,
                     "crs": prepared.crs,

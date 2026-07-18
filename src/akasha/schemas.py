@@ -290,6 +290,13 @@ class FieldSarRequest(BaseModel):
     targetDate: date
     windowDays: int = Field(default=21, ge=1, le=31)
     minimumCoveragePercent: float = Field(default=95.0, ge=0, le=100)
+    includeHistory: bool = False
+    historyLookbackDays: int = Field(default=180, ge=1, le=365)
+    maximumHistoryObservations: int = Field(default=8, ge=1, le=12)
+    comparisonPolicyVersion: Literal["eos04-comparability-v1"] = (
+        "eos04-comparability-v1"
+    )
+    minimumBaselineObservations: int = Field(default=5, ge=3, le=12)
 
     @model_validator(mode="after")
     def validate_geometry(self) -> Self:
@@ -324,6 +331,59 @@ class FieldSarQuality(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class FieldSarHistoryObservation(BaseModel):
+    acquisitionDate: date
+    coveragePercent: float = Field(ge=0, le=100)
+    validPixelCount: int = Field(ge=1)
+    fieldPixelCount: int = Field(ge=1)
+    bands: list[FieldSarBandStatistics]
+    features: dict[str, float] = Field(default_factory=dict)
+    quality: dict[str, Any] = Field(default_factory=dict)
+    comparableToCurrent: Literal[True] = True
+
+
+class FieldSarComparisonExclusion(BaseModel):
+    acquisitionDate: date
+    reasonCodes: list[str] = Field(min_length=1)
+
+
+class FieldSarComparison(BaseModel):
+    status: Literal[
+        "AVAILABLE",
+        "INSUFFICIENT_BASELINE",
+        "DEGENERATE_BASELINE",
+        "NO_COMPARABLE_HISTORY",
+        "METADATA_INCOMPLETE",
+    ]
+    policyVersion: str | None = None
+    currentKeyHash: str | None = None
+    previousComparableDate: date | None = None
+    comparableObservationCount: int = Field(ge=1)
+    excludedObservationCount: int = Field(ge=0)
+    exclusions: list[FieldSarComparisonExclusion] = Field(default_factory=list)
+
+
+class FieldSarChange(BaseModel):
+    status: Literal["AVAILABLE", "UNAVAILABLE"]
+    referenceDate: date | None = None
+    bands: list[dict[str, Any]] = Field(default_factory=list)
+    features: dict[str, float] = Field(default_factory=dict)
+
+
+class FieldSarBaseline(BaseModel):
+    status: Literal[
+        "AVAILABLE",
+        "INSUFFICIENT_OBSERVATIONS",
+        "DEGENERATE_BASELINE",
+    ]
+    requiredPriorObservations: int = Field(ge=3)
+    priorObservationCount: int = Field(ge=0)
+    windowStart: date | None = None
+    windowEnd: date | None = None
+    bands: list[dict[str, Any]] = Field(default_factory=list)
+    features: dict[str, dict[str, float | None]] = Field(default_factory=dict)
+
+
 class FieldSarAvailableResponse(BaseModel):
     status: Literal["AVAILABLE"] = "AVAILABLE"
     queryId: str
@@ -342,6 +402,10 @@ class FieldSarAvailableResponse(BaseModel):
     quality: FieldSarQuality
     provenance: dict[str, Any] = Field(default_factory=dict)
     overlayUrl: str
+    comparison: FieldSarComparison | None = None
+    history: list[FieldSarHistoryObservation] = Field(default_factory=list)
+    change: FieldSarChange | None = None
+    baseline: FieldSarBaseline | None = None
 
 
 class FieldSarUnavailableResponse(BaseModel):
