@@ -161,6 +161,17 @@ class Settings(BaseSettings):
         le=100,
     )
 
+    eos04_profile_version: str = "eos04-sar-mrs-l2b-gamma0-v2"
+    eos04_preload_source_id: str = "eos-04-sar-mrs-l2b"
+    eos04_preload_aoi_id: str = "bangalore_60km_geodesic_aoi"
+    eos04_preload_provider_route: str = "bhoonidhi:EOS-04_SAR-MRS_L2B"
+    eos04_preload_date_window_days: int = Field(default=365, gt=0)
+    eos04_preload_refresh_days: int = Field(default=12, gt=0)
+    eos04_max_downloads_per_run: int = Field(default=1, gt=0, le=1)
+    eos04_preload_schedule_enabled: bool = False
+    eos04_preload_schedule_hour_utc: int = Field(default=5, ge=0, le=23)
+    eos04_preload_schedule_minute_utc: int = Field(default=0, ge=0, le=59)
+
     field_max_vertices: int = Field(default=5000, gt=0)
     field_max_area_sq_km: float = Field(default=25.0, gt=0)
     field_min_usable_pixels: int = Field(default=1, gt=0)

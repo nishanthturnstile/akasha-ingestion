@@ -9,6 +9,12 @@ from sqlalchemy import text
 from akasha.catalog.seed import SEED_SOURCES
 from akasha.config import get_settings
 from akasha.db.session import create_db_engine
+from akasha.processing.eos04 import (
+    EOS04_COLLECTION_ID,
+    EOS04_PGSTAC_COLLECTION_ID,
+    EOS04_PROCESSING_PROFILE_VERSION,
+    EOS04_SOURCE_ID,
+)
 from akasha.processing.resourcesat import (
     BHOONIDHI_AWIFS_BOA_COLLECTION_ID,
     BHOONIDHI_LISS3_BOA_COLLECTION_ID,
@@ -165,6 +171,45 @@ SOURCE_METADATA: dict[str, dict[str, Any]] = {
             "pgstac_collection": "akasha-sentinel-2-l2a-derived-v1",
         },
     },
+    EOS04_SOURCE_ID: {
+        "status": "manual_only",
+        "execution_policy_ref": "bhoonidhi-default",
+        "validation_profile": {
+            "version": EOS04_PROCESSING_PROFILE_VERSION,
+            "checks": [
+                "l2b_ard_metadata_validation",
+                "rtc_applied_validation",
+                "gamma0_dn_calibration_validation",
+                "valid_data_mask_128_validation",
+                "explicit_sar_polarizations",
+                "float32_db_backscatter_cog",
+                "sar_pgstac_metadata",
+                "natural_tile_response_validation",
+            ],
+        },
+        "processing_profile": {
+            "version": EOS04_PROCESSING_PROFILE_VERSION,
+            "source": "bhoonidhi",
+            "level": "L2B",
+            "family": "sar_backscatter",
+            "input_representation": "uint16_gamma0_dn",
+            "calibration_formula": (
+                "10*log10(DN^2-IMAGE_NOISE_BIAS)-Calibration_Constant_Beta0"
+            ),
+            "valid_mask_value": 128,
+            "output_unit": "dB",
+        },
+        "license_profile": {
+            "profile": "nrsc-bhoonidhi-restricted",
+            "serving": "internal_private",
+        },
+        "provider_metadata": {
+            "primary_route": f"bhoonidhi:{EOS04_COLLECTION_ID}",
+            "provider_collection": EOS04_COLLECTION_ID,
+            "pgstac_collection": EOS04_PGSTAC_COLLECTION_ID,
+            "requires_approved_runtime": True,
+        },
+    },
 } | {
     source_id: _resourcesat_source_metadata(source_id, profile)
     for source_id, profile in RESOURCESAT_SOURCE_PROFILES.items()
@@ -292,6 +337,23 @@ PROVIDER_ROUTES: tuple[dict[str, Any], ...] = (
             ],
             "requires_approved_runtime": True,
             "mask_method": RESOURCESAT_MASK_METHOD,
+        },
+    },
+    {
+        "source_id": EOS04_SOURCE_ID,
+        "provider_adapter": "bhoonidhi",
+        "provider_collection": EOS04_COLLECTION_ID,
+        "provider_priority": 1,
+        "provider_role": "primary",
+        "status": "manual_only",
+        "access_mode": "authenticated_download",
+        "execution_policy_ref": "bhoonidhi-default",
+        "license_profile": "nrsc-bhoonidhi-restricted",
+        "metadata": {
+            "route_key": f"bhoonidhi:{EOS04_COLLECTION_ID}",
+            "requires_approved_runtime": True,
+            "processing_family": "sar_backscatter",
+            "product_exposure": "hidden",
         },
     },
 )

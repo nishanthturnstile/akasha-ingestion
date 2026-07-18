@@ -44,6 +44,16 @@ SEED_SOURCES: tuple[SourceResponse, ...] = (
         supported_indices=["ndvi", "msavi", "ndmi", "ndwi_green_nir"],
     ),
     SourceResponse(
+        source_id="eos-04-sar-mrs-l2b",
+        catalog_slug="eos-04-risat",
+        provider_adapter="bhoonidhi",
+        instrument_mode="SAR-MRS",
+        analysis_level="L2B",
+        schedule_state="manual",
+        product_exposure="hidden",
+        supported_indices=[],
+    ),
+    SourceResponse(
         source_id="landsat-c2-l2",
         catalog_slug="landsat-c2",
         provider_adapter="earthsearch",

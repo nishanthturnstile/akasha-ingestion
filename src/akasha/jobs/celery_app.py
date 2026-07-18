@@ -14,6 +14,7 @@ def create_celery_app() -> Celery:
         "akasha.jobs.tasks",
         "akasha.jobs.sentinel2_tasks",
         "akasha.jobs.resourcesat_tasks",
+        "akasha.jobs.eos04_tasks",
     )
     celery_app.conf.task_routes = {
         "akasha.jobs.tasks.mock_sync": {"queue": "download"},
@@ -28,6 +29,8 @@ def create_celery_app() -> Celery:
         "akasha.jobs.resourcesat_tasks.composite": {"queue": "heavy-cpu"},
         "akasha.jobs.resourcesat_tasks.index_generation": {"queue": "cog"},
         "akasha.jobs.resourcesat_tasks.readiness_refresh": {"queue": "stats"},
+        "akasha.jobs.eos04_tasks.backfill": {"queue": "heavy-cpu"},
+        "akasha.jobs.eos04_tasks.scheduled_preload": {"queue": "maintenance"},
     }
     beat_schedule = {}
     if settings.sentinel2_preload_schedule_enabled:
@@ -47,6 +50,14 @@ def create_celery_app() -> Celery:
             "task": "akasha.jobs.resourcesat_tasks.scheduled_resourcesat_sources",
             "schedule": crontab(minute=0, hour="*/6"),
         }
+    if settings.eos04_preload_schedule_enabled:
+        beat_schedule["eos04-preload"] = {
+            "task": "akasha.jobs.eos04_tasks.scheduled_preload",
+            "schedule": crontab(
+                minute=settings.eos04_preload_schedule_minute_utc,
+                hour=settings.eos04_preload_schedule_hour_utc,
+            ),
+        }
     if beat_schedule:
         celery_app.conf.beat_schedule = beat_schedule
     celery_app.conf.task_acks_late = True
@@ -57,6 +68,7 @@ def create_celery_app() -> Celery:
 
 celery_app = create_celery_app()
 
+import akasha.jobs.eos04_tasks  # noqa: E402,F401
 import akasha.jobs.resourcesat_tasks  # noqa: E402,F401
 import akasha.jobs.sentinel2_tasks  # noqa: E402,F401
 import akasha.jobs.tasks  # noqa: E402,F401
