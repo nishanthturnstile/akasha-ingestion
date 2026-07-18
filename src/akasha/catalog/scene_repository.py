@@ -96,6 +96,27 @@ class InMemorySceneRepository:
         )
         return candidates[:limit]
 
+    def list_range(
+        self,
+        *,
+        source_id: str,
+        start_date: date,
+        end_date: date,
+        limit: int,
+    ) -> list[ProviderSceneRecord]:
+        scenes = [
+            scene
+            for scene in self._scenes.values()
+            if scene.source_id == source_id
+            and scene.acquisition_at is not None
+            and start_date <= scene.acquisition_at.date() <= end_date
+        ]
+        scenes.sort(
+            key=lambda scene: scene.acquisition_at or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        return scenes[:limit]
+
 
 class DatabaseSceneRepository:
     def __init__(self, engine: Engine) -> None:
@@ -258,6 +279,35 @@ class DatabaseSceneRepository:
                     "requested_date": requested_date,
                     "start_date": requested_date - timedelta(days=window_days),
                     "end_date": requested_date + timedelta(days=window_days),
+                    "limit": limit,
+                },
+            ).mappings().all()
+        return [_row_to_scene(row) for row in rows]
+
+    def list_range(
+        self,
+        *,
+        source_id: str,
+        start_date: date,
+        end_date: date,
+        limit: int,
+    ) -> list[ProviderSceneRecord]:
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT *, ST_AsGeoJSON(scene_geometry)::json AS scene_geometry_geojson
+                    FROM akasha.provider_scenes
+                    WHERE source_id = :source_id
+                      AND acquisition_at::date BETWEEN :start_date AND :end_date
+                    ORDER BY acquisition_at DESC
+                    LIMIT :limit
+                    """
+                ),
+                {
+                    "source_id": source_id,
+                    "start_date": start_date,
+                    "end_date": end_date,
                     "limit": limit,
                 },
             ).mappings().all()

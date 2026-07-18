@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
 from akasha.catalog.asset_repository import InMemorySceneAssetRepository, SceneAssetRecord
 from akasha.catalog.backfill_repository import BackfillRunRecord, InMemoryBackfillRepository
+from akasha.catalog.field_query_repository import FieldQueryRecord, InMemoryFieldQueryRepository
 from akasha.catalog.raster_repository import InMemoryRasterRepository, RasterOutputRecord
 from akasha.catalog.scene_repository import (
     InMemorySceneRepository,
@@ -44,6 +45,47 @@ def test_memory_scene_and_asset_repositories_upsert_deterministically() -> None:
     assert first_scene.id == second_scene.id
     assert asset.id
     assert assets.list_for_scene(first_scene.id or "") == [asset]
+
+
+def test_memory_field_query_cache_enforces_expiry() -> None:
+    repository = InMemoryFieldQueryRepository()
+    active = repository.save(
+        FieldQueryRecord(
+            query_id="active",
+            field_geometry={"type": "Polygon", "coordinates": []},
+            index_name="sar_backscatter:history",
+            requested_date=date(2026, 7, 17),
+            selected_scene_id="scene-1",
+            selection_reason="test",
+            geometry_hash="geometry",
+            analysis_version="v1",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    repository.save(
+        FieldQueryRecord(
+            query_id="expired",
+            field_geometry={"type": "Polygon", "coordinates": []},
+            index_name="sar_backscatter:history",
+            requested_date=date(2026, 7, 1),
+            selected_scene_id="scene-1",
+            selection_reason="test",
+            geometry_hash="geometry",
+            analysis_version="v1",
+            expires_at=datetime.now(UTC) - timedelta(seconds=1),
+        )
+    )
+
+    cached = repository.find_cached(
+        selected_scene_id="scene-1",
+        geometry_hash="geometry",
+        index_name="sar_backscatter:history",
+        analysis_version="v1",
+    )
+
+    assert cached == active
+    assert repository.get("expired") is None
+    assert repository.delete_expired() == 1
 
 
 def test_memory_asset_repository_preserves_existing_mirror_on_registration_upsert() -> None:
