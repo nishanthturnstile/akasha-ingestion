@@ -62,6 +62,7 @@ class TiTilerTileService:
         x: int,
         y: int,
         assets: str,
+        asset_bidx: str | None = None,
         rescale: str | None = None,
         colormap_name: str | None = None,
     ) -> tuple[bytes, str]:
@@ -71,6 +72,8 @@ class TiTilerTileService:
         )
         url = f"{self._settings.titiler_internal_url.rstrip('/')}{path}"
         params: dict[str, str] = {"assets": assets}
+        if asset_bidx:
+            params["asset_bidx"] = asset_bidx
         if rescale:
             params["rescale"] = rescale
         if colormap_name:

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from akasha.config import Environment
 from akasha.jobs.store import Job
+from akasha.processing.eos04 import EOS04_COLLECTION_ID, EOS04_SOURCE_ID
 from akasha.processing.resourcesat import RESOURCESAT_SOURCE_COLLECTIONS, RESOURCESAT_SOURCE_IDS
 
 T = TypeVar("T")
@@ -42,6 +43,22 @@ class SourceResponse(BaseModel):
     supported_indices: list[str] = Field(default_factory=list)
 
 
+class NaturalSourceDate(BaseModel):
+    acquisitionDate: date
+    datetime: datetime
+    tileAvailable: bool
+    sceneCount: int
+    bounds: list[float] | None = None
+    polarizations: list[str] = Field(default_factory=list)
+    unavailableReason: str | None = None
+
+
+class SourceDatesResponse(BaseModel):
+    sourceId: str
+    aoiId: str
+    dates: list[NaturalSourceDate]
+
+
 class SyncRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -49,7 +66,12 @@ class SyncRequest(BaseModel):
     aoi_id: str = Field(min_length=1)
     date_start: date
     date_end: date
-    job_type: Literal["mock_sync", "sentinel2_backfill", "resourcesat_backfill"] = "mock_sync"
+    job_type: Literal[
+        "mock_sync",
+        "sentinel2_backfill",
+        "resourcesat_backfill",
+        "eos04_backfill",
+    ] = "mock_sync"
     provider_route: str | None = Field(default=None, min_length=1)
     mode: Literal[
         "metadata_only",
@@ -93,6 +115,22 @@ class SyncRequest(BaseModel):
                 raise ValueError(
                     "resourcesat_backfill mode must be metadata_only, download_only, "
                     "prepare_only, composite_only, or full_pipeline"
+                )
+        elif self.job_type == "eos04_backfill":
+            if self.source_id != EOS04_SOURCE_ID:
+                raise ValueError(f"eos04_backfill requires source_id {EOS04_SOURCE_ID}")
+            expected_route = f"bhoonidhi:{EOS04_COLLECTION_ID}"
+            if self.provider_route != expected_route:
+                raise ValueError(f"eos04_backfill requires provider_route {expected_route}")
+            if self.mode not in {
+                "metadata_only",
+                "download_only",
+                "prepare_only",
+                "full_pipeline",
+            }:
+                raise ValueError(
+                    "eos04_backfill mode must be metadata_only, download_only, prepare_only, "
+                    "or full_pipeline"
                 )
         elif self.provider_route is not None:
             raise ValueError("provider_route is not supported for mock_sync")

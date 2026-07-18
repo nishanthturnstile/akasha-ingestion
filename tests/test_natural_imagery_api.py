@@ -1,0 +1,129 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from fastapi.testclient import TestClient
+
+from akasha.api.app import create_app
+from akasha.catalog.asset_repository import SceneAssetRecord
+from akasha.catalog.scene_repository import ProviderSceneRecord
+from akasha.config import Environment, RuntimeBackend, Settings
+from akasha.processing.eos04 import EOS04_SOURCE_ID
+from akasha.security import hash_api_key
+from akasha.services.natural_imagery import NaturalImageryService
+
+API_KEY = "test-akasha-key"
+AOI_ID = "bangalore"
+
+
+class _TileService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def fetch_tile(self, **kwargs):
+        self.calls.append(kwargs)
+        return b"png-bytes", "image/png"
+
+
+def _app_with_scene() -> tuple[TestClient, _TileService]:
+    app = create_app(
+        Settings(
+            environment=Environment.TEST,
+            runtime_backend=RuntimeBackend.MEMORY,
+            api_key_hashes=f"test:{hash_api_key(API_KEY)}",
+        )
+    )
+    scene = app.state.scene_repository.upsert(
+        ProviderSceneRecord(
+            id=None,
+            provider_adapter="bhoonidhi",
+            source_id=EOS04_SOURCE_ID,
+            provider_product_id="EOS04-20260711",
+            acquisition_at=datetime(2026, 7, 11, 5, 30, tzinfo=UTC),
+            status="accepted",
+            pgstac_item_id="eos04-20260711",
+            aoi_id=AOI_ID,
+        )
+    )
+    assert scene.id is not None
+    app.state.asset_repository.upsert(
+        SceneAssetRecord(
+            id=None,
+            scene_id=scene.id,
+            asset_kind="analytic",
+            asset_key="backscatter",
+            metadata={
+                "bbox": [77.0, 12.0, 78.0, 13.0],
+                "polarizations": ["VV", "VH"],
+            },
+        )
+    )
+    tile_service = _TileService()
+    app.state.natural_imagery_service = NaturalImageryService(
+        scene_repository=app.state.scene_repository,
+        asset_repository=app.state.asset_repository,
+        tile_service=tile_service,
+    )
+    return TestClient(app), tile_service
+
+
+def test_eos04_dates_expose_radar_metadata_without_optical_quality() -> None:
+    client, _ = _app_with_scene()
+
+    response = client.get(
+        f"/api/v1/sources/{EOS04_SOURCE_ID}/dates",
+        params={"aoiId": AOI_ID},
+        headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["sourceId"] == EOS04_SOURCE_ID
+    assert payload["dates"] == [
+        {
+            "acquisitionDate": "2026-07-11",
+            "datetime": "2026-07-11T05:30:00Z",
+            "tileAvailable": True,
+            "sceneCount": 1,
+            "bounds": [77.0, 12.0, 78.0, 13.0],
+            "polarizations": ["VV", "VH"],
+            "unavailableReason": None,
+        }
+    ]
+    assert "cloud" not in str(payload).lower()
+
+
+def test_eos04_tile_uses_backscatter_asset_and_fixed_db_rescale() -> None:
+    client, tile_service = _app_with_scene()
+
+    response = client.get(
+        f"/api/v1/sources/{EOS04_SOURCE_ID}/dates/2026-07-11/tiles/8/182/105.png",
+        params={"aoiId": AOI_ID},
+        headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"png-bytes"
+    assert tile_service.calls == [
+        {
+            "collection_id": "akasha-eos-04-sar-mrs-l2b-backscatter-v1",
+            "item_id": "eos04-20260711",
+            "z": 8,
+            "x": 182,
+            "y": 105,
+            "assets": "backscatter",
+            "asset_bidx": "backscatter|1",
+            "rescale": "-25,5",
+        }
+    ]
+
+
+def test_natural_imagery_routes_require_api_key() -> None:
+    client, _ = _app_with_scene()
+
+    response = client.get(
+        f"/api/v1/sources/{EOS04_SOURCE_ID}/dates",
+        params={"aoiId": AOI_ID},
+    )
+
+    assert response.status_code == 401

@@ -8,7 +8,7 @@ from akasha.config import Settings
 from akasha.scheduler.source_registry import (
     SourceAoiState,
     SourceState,
-    resourcesat_source_registry,
+    ingestion_source_registry,
 )
 
 PlannerDecision = Literal["due", "not_due", "disabled"]
@@ -39,7 +39,7 @@ def plan_due_sources(
     effective_now = (now or datetime.now(UTC)).astimezone(UTC)
     last_success = last_success_by_source_aoi or {}
     plans: list[PlannedSourceRun] = []
-    for source in resourcesat_source_registry(settings):
+    for source in ingestion_source_registry(settings):
         for aoi in source.default_aois:
             plans.append(
                 _plan_source_aoi(

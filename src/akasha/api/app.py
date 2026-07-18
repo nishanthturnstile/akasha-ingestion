@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from datetime import date
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -21,6 +22,7 @@ from akasha.runtime import (
     create_asset_repository,
     create_backfill_repository,
     create_engine_if_needed,
+    create_eos04_ingestion_service,
     create_field_query_repository,
     create_job_store,
     create_object_store,
@@ -46,6 +48,7 @@ from akasha.schemas import (
     FieldIndexResponse,
     HealthResponse,
     JobResponse,
+    SourceDatesResponse,
     SourceResponse,
     SyncRequest,
 )
@@ -55,7 +58,13 @@ from akasha.services.analytics import (
     AnalyticsRasterUnavailable,
     AnalyticsService,
 )
+from akasha.services.eos04_ingestion import Eos04IngestionService
 from akasha.services.ingestion import MockIngestionService
+from akasha.services.natural_imagery import (
+    NaturalImageryNotFound,
+    NaturalImageryService,
+    NaturalImageryUnavailable,
+)
 from akasha.services.readiness import ReadinessService
 from akasha.services.resourcesat_ingestion import ResourceSatIngestionService
 from akasha.services.sentinel2_ingestion import Sentinel2IngestionService
@@ -154,6 +163,18 @@ def create_app(
         pgstac_repository=pgstac_repository,
         tile_layer_repository=tile_layer_repository,
     )
+    eos04_service = create_eos04_ingestion_service(
+        app_settings,
+        engine,
+        job_store=store,
+        stage_store=stage_store,
+        aoi_repository=aoi_repository,
+        source_provider_route_repository=source_provider_routes,
+        scene_repository=scene_repository,
+        asset_repository=asset_repository,
+        object_store=objects,
+        pgstac_repository=pgstac_repository,
+    )
     analytics_service = AnalyticsService(
         field_query_repository=field_query_repository,
         scene_repository=scene_repository,
@@ -169,6 +190,11 @@ def create_app(
         scene_repository=scene_repository,
         raster_repository=raster_repository,
         settings=app_settings,
+    )
+    natural_imagery_service = NaturalImageryService(
+        scene_repository=scene_repository,
+        asset_repository=asset_repository,
+        tile_service=titiler_tile_service,
     )
 
     @asynccontextmanager
@@ -205,8 +231,10 @@ def create_app(
     app.state.ingestion_service = service
     app.state.sentinel2_ingestion_service = sentinel2_service
     app.state.resourcesat_ingestion_service = resourcesat_service
+    app.state.eos04_ingestion_service = eos04_service
     app.state.analytics_service = analytics_service
     app.state.readiness_service = readiness_service
+    app.state.natural_imagery_service = natural_imagery_service
 
     api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -279,6 +307,56 @@ def create_app(
     def sources() -> APIResponse[list[SourceResponse]]:
         return APIResponse(success=True, data=source_catalog.list_sources())
 
+    @app.get(
+        "/api/v1/sources/{source_id}/dates",
+        response_model=APIResponse[SourceDatesResponse],
+        dependencies=[auth_dependency],
+        responses=API_ERROR_RESPONSES | NOT_FOUND_ERROR_RESPONSE,
+    )
+    def source_dates(
+        request: Request,
+        source_id: str,
+        aoiId: str,
+    ) -> APIResponse[SourceDatesResponse]:
+        service_obj: NaturalImageryService = request.app.state.natural_imagery_service
+        try:
+            payload = service_obj.dates(source_id=source_id, aoi_id=aoiId)
+        except NaturalImageryNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        return APIResponse(success=True, data=payload)
+
+    @app.get(
+        "/api/v1/sources/{source_id}/dates/{acquisition_date}/tiles/{z}/{x}/{y}.png",
+        dependencies=[auth_dependency],
+        responses=API_ERROR_RESPONSES | NOT_FOUND_ERROR_RESPONSE,
+    )
+    def natural_source_tile(
+        request: Request,
+        source_id: str,
+        acquisition_date: date,
+        z: int,
+        x: int,
+        y: int,
+        aoiId: str,
+    ) -> Response:
+        service_obj: NaturalImageryService = request.app.state.natural_imagery_service
+        try:
+            content, media_type = service_obj.tile(
+                source_id=source_id,
+                aoi_id=aoiId,
+                acquisition_date=acquisition_date,
+                z=z,
+                x=x,
+                y=y,
+            )
+        except NaturalImageryNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except NaturalImageryUnavailable as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except TiTilerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return Response(content=content, media_type=media_type)
+
     @app.post(
         "/api/v1/ingestion/sync",
         response_model=APIResponse[JobResponse],
@@ -297,6 +375,11 @@ def create_app(
                 request.app.state.resourcesat_ingestion_service
             )
             job = resourcesat_service_obj.start_backfill(payload)
+        elif payload.job_type == "eos04_backfill":
+            eos04_service_obj: Eos04IngestionService = (
+                request.app.state.eos04_ingestion_service
+            )
+            job = eos04_service_obj.start_backfill(payload)
         else:
             service_obj: MockIngestionService = request.app.state.ingestion_service
             job = service_obj.start_mock_sync(payload)

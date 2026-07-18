@@ -10,8 +10,15 @@ from uuid import UUID
 import pystac
 from sqlalchemy import Engine, text
 
+from akasha.catalog.asset_repository import SceneAssetRecord
 from akasha.catalog.raster_repository import RasterOutputRecord
 from akasha.catalog.scene_repository import ProviderSceneRecord
+from akasha.processing.eos04 import (
+    EOS04_COLLECTION_ID,
+    EOS04_PGSTAC_COLLECTION_ID,
+    EOS04_PROCESSING_PROFILE_VERSION,
+    EOS04_SOURCE_ID,
+)
 from akasha.processing.resourcesat import (
     RESOURCESAT_MASK_CLASSES,
     RESOURCESAT_SOURCE_IDS,
@@ -32,6 +39,7 @@ RESOURCESAT_DERIVED_COLLECTION_IDS = (
 EO_EXTENSION = "https://stac-extensions.github.io/eo/v2.0.0/schema.json"
 RASTER_EXTENSION = "https://stac-extensions.github.io/raster/v2.0.0/schema.json"
 PROJECTION_EXTENSION = "https://stac-extensions.github.io/projection/v2.0.0/schema.json"
+SAR_EXTENSION = "https://stac-extensions.github.io/sar/v1.3.0/schema.json"
 CLASSIFICATION_EXTENSION = (
     "https://stac-extensions.github.io/classification/v2.0.0/schema.json"
 )
@@ -165,6 +173,66 @@ def build_derived_item(
     return item
 
 
+def build_eos04_backscatter_item(
+    *,
+    scene: ProviderSceneRecord,
+    asset: SceneAssetRecord,
+    bbox: list[float],
+    geometry: dict[str, Any],
+) -> pystac.Item:
+    if scene.source_id != EOS04_SOURCE_ID:
+        raise ValueError("EOS-04 STAC builder requires the EOS-04 source")
+    polarizations = [
+        str(value).upper() for value in asset.metadata.get("polarizations", []) if value
+    ]
+    if not polarizations:
+        raise ValueError("EOS-04 STAC item requires explicit sar:polarizations")
+    item_id = scene.pgstac_item_id or _eos04_item_id(scene)
+    item = _base_derived_item(
+        scene=scene,
+        item_id=item_id,
+        collection_id=EOS04_PGSTAC_COLLECTION_ID,
+        bbox=bbox,
+        geometry=geometry,
+        stac_extensions=[SAR_EXTENSION, RASTER_EXTENSION, PROJECTION_EXTENSION],
+        properties={
+            "platform": "eos-04",
+            "instruments": ["sar"],
+            "sar:frequency_band": "C",
+            "sar:instrument_mode": "MRS",
+            "sar:polarizations": polarizations,
+            "akasha:source_id": EOS04_SOURCE_ID,
+            "akasha:provider_adapter": scene.provider_adapter,
+            "akasha:provider_collection": EOS04_COLLECTION_ID,
+            "akasha:logical_scene_key": scene.logical_scene_key,
+            "akasha:aoi_id": scene.aoi_id,
+            "akasha:processing_profile_version": EOS04_PROCESSING_PROFILE_VERSION,
+            "akasha:display_only": True,
+        },
+    )
+    item.add_asset(
+        "backscatter",
+        pystac.Asset(
+            href=str(asset.asset_href or asset.object_path),
+            media_type=pystac.MediaType.COG,
+            roles=["data", "backscatter"],
+            title="EOS-04 calibrated backscatter",
+            extra_fields={
+                "raster:bands": [
+                    {
+                        "name": polarization,
+                        "data_type": "float32",
+                        "nodata": asset.nodata_value,
+                        "unit": "dB",
+                    }
+                    for polarization in polarizations
+                ]
+            },
+        ),
+    )
+    return item
+
+
 def _base_derived_item(
     *,
     scene: ProviderSceneRecord,
@@ -218,6 +286,15 @@ def _resourcesat_derived_item_id(
     return f"{source_slug}-{aoi_or_group}-{acquisition}-{product_hash}"
 
 
+def _eos04_item_id(scene: ProviderSceneRecord) -> str:
+    logical = scene.logical_scene_key or scene.provider_product_id
+    acquisition = (
+        scene.acquisition_at.strftime("%Y%m%dT%H%M%S") if scene.acquisition_at else "unknown"
+    )
+    product_hash = sha256(logical.encode()).hexdigest()[:12]
+    return f"eos04-sar-mrs-{acquisition}-{product_hash}"
+
+
 def _json_dumps(value: dict[str, Any]) -> str:
     from json import dumps
 
@@ -245,6 +322,8 @@ def collection_json(collection_id: str) -> dict[str, Any]:
         profile = profile_for_source(source_id)
         if collection_id == profile.pgstac_collection:
             return _resourcesat_collection(profile)
+    if collection_id == EOS04_PGSTAC_COLLECTION_ID:
+        return _eos04_collection(collection_id)
     return _generic_collection(collection_id)
 
 
@@ -299,6 +378,36 @@ def _resourcesat_collection(profile: ResourceSatProfile) -> dict[str, Any]:
             "akasha:mask_method": ["akasha-threshold-mask-v1"],
             "classification:classes": _classification_classes(),
             "bands": _source_band_summaries(profile),
+        },
+        "links": [],
+    }
+
+
+def _eos04_collection(collection_id: str) -> dict[str, Any]:
+    now = datetime.now(UTC).isoformat()
+    return {
+        "type": "Collection",
+        "stac_version": "1.0.0",
+        "stac_extensions": [SAR_EXTENSION, RASTER_EXTENSION, PROJECTION_EXTENSION],
+        "id": collection_id,
+        "title": "Akasha EOS-04 SAR-MRS L2B backscatter",
+        "description": (
+            "Validated EOS-04 C-band SAR-MRS L2B calibrated backscatter COGs from "
+            "ISRO/NRSC Bhoonidhi. Display-only; no optical vegetation indices."
+        ),
+        "license": "proprietary",
+        "extent": {
+            "spatial": {"bbox": [[-180, -90, 180, 90]]},
+            "temporal": {"interval": [[now, None]]},
+        },
+        "summaries": {
+            "platform": ["eos-04"],
+            "instruments": ["sar"],
+            "sar:frequency_band": ["C"],
+            "sar:instrument_mode": ["MRS"],
+            "akasha:source_id": [EOS04_SOURCE_ID],
+            "akasha:provider_collection": [EOS04_COLLECTION_ID],
+            "akasha:supported_indices": [],
         },
         "links": [],
     }

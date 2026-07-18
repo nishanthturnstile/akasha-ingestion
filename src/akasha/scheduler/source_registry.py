@@ -15,7 +15,12 @@ SourceLifecycleState = Literal["disabled", "manual", "scheduled"]
 SourceScheduleState = Literal["disabled", "manual", "scheduled"]
 SourceProductExposure = Literal["hidden", "admin", "public"]
 SourceValidationState = Literal["pending", "accepted"]
-SourceCadenceClass = Literal["revisit_5d", "revisit_24d", "regional_context"]
+SourceCadenceClass = Literal[
+    "revisit_5d",
+    "revisit_12d",
+    "revisit_24d",
+    "regional_context",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,11 +103,55 @@ def source_state_by_id(settings: Settings, source_id: str) -> SourceState | None
     return next(
         (
             source
-            for source in resourcesat_source_registry(settings)
+            for source in ingestion_source_registry(settings)
             if source.source_id == source_id
         ),
         None,
     )
+
+
+def eos04_source_state(settings: Settings) -> SourceState:
+    aoi = SourceAoiState(
+        source_id=settings.eos04_preload_source_id,
+        aoi_id=settings.eos04_preload_aoi_id,
+        provider_route=settings.eos04_preload_provider_route,
+        date_window_days=settings.eos04_preload_date_window_days,
+        refresh_days=settings.eos04_preload_refresh_days,
+        freshness_max_age_hours=settings.eos04_preload_refresh_days * 24,
+        max_downloads=settings.eos04_max_downloads_per_run,
+        min_coverage_percent=0.0,
+        composite_window_days=0,
+    )
+    schedule_state: SourceScheduleState = (
+        "scheduled" if settings.eos04_preload_schedule_enabled else "manual"
+    )
+    lifecycle_state: SourceLifecycleState = (
+        "scheduled" if settings.eos04_preload_schedule_enabled else "manual"
+    )
+    return SourceState(
+        source_id=settings.eos04_preload_source_id,
+        provider_route=settings.eos04_preload_provider_route,
+        lifecycle_state=lifecycle_state,
+        schedule_state=schedule_state,
+        capabilities=("search", "download", "prepare", "validate", "catalog", "tiles"),
+        product_exposure="hidden",
+        commercial_state="restricted",
+        aoi_scope="configured_aois",
+        validation_state="pending",
+        readiness_reasons=(
+            "EOS04_REAL_PRODUCT_NOT_VALIDATED",
+            "EOS04_PRODUCT_EXPOSURE_DISABLED",
+        ),
+        validation_profile=settings.eos04_profile_version,
+        cadence_class="revisit_12d",
+        host_pool="akasha-staging",
+        owner="akasha-ingestion",
+        default_aois=(aoi,),
+    )
+
+
+def ingestion_source_registry(settings: Settings) -> tuple[SourceState, ...]:
+    return (*resourcesat_source_registry(settings), eos04_source_state(settings))
 
 
 def _state(
