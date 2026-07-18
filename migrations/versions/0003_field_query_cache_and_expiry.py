@@ -1,6 +1,6 @@
 """Add bounded field-query cache identity.
 
-Revision ID: 0003_field_query_cache_and_expiry
+Revision ID: 0003_field_query_cache_expiry
 Revises: 0002_phase2_s2_slice
 """
 
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0003_field_query_cache_and_expiry"
+revision = "0003_field_query_cache_expiry"
 down_revision = "0002_phase2_s2_slice"
 branch_labels = None
 depends_on = None
