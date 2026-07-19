@@ -224,7 +224,11 @@ def landsat_source_state(settings: Settings) -> SourceState:
         product_exposure="public" if settings.landsat_readiness_enabled else "hidden",
         commercial_state="restricted",
         aoi_scope="configured_aois",
-        validation_state="pending",
+        # The same fail-closed switch that exposes readiness is enabled only after
+        # the real-scene staging acceptance gates have passed.
+        validation_state=(
+            "accepted" if settings.landsat_readiness_enabled else "pending"
+        ),
         readiness_reasons=(
             ()
             if settings.landsat_readiness_enabled

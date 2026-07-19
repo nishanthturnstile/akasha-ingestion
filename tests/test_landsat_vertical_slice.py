@@ -181,6 +181,7 @@ def test_landsat_backfill_is_idempotent_and_field_ndvi_is_available(tmp_path) ->
     source_state = landsat_source_state(settings)
     assert source_state.schedule_state == "manual"
     assert source_state.product_exposure == "public"
+    assert source_state.validation_state == "accepted"
 
 
 def test_landsat_selection_prioritizes_aoi_coverage_before_cloud() -> None:
