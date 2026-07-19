@@ -6,7 +6,12 @@ import pytest
 
 from akasha.catalog.profile_repository import InMemoryProfileRepository, build_memory_profiles
 from akasha.catalog.repository import StaticSourceCatalog
-from akasha.catalog.seed_db import PROVIDER_ROUTES, THRESHOLD_PROFILES, VISUALIZATION_PROFILES
+from akasha.catalog.seed_db import (
+    PROVIDER_ROUTES,
+    THRESHOLD_PROFILES,
+    VISUALIZATION_PROFILES,
+    build_execution_policies,
+)
 from akasha.catalog.source_route_repository import (
     InMemorySourceProviderRouteRepository,
     build_memory_routes,
@@ -73,6 +78,16 @@ def test_landsat_seed_is_hidden_manual_with_signed_https_primary() -> None:
     assert route.provider_role == "primary"
     assert route.status == "manual_only"
     assert route.access_mode == "signed_https"
+
+
+def test_every_provider_route_references_a_seeded_execution_policy() -> None:
+    policy_keys = {policy["policy_key"] for policy in build_execution_policies()}
+
+    assert {
+        route["execution_policy_ref"]
+        for route in PROVIDER_ROUTES
+        if route.get("execution_policy_ref")
+    } <= policy_keys
 
 
 def test_memory_profiles_return_seeded_ndvi_defaults() -> None:

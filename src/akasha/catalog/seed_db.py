@@ -698,8 +698,8 @@ def _execution_policy(
     }
 
 
-def seed_execution_policies(connection) -> None:
-    policies = [
+def build_execution_policies() -> list[dict[str, Any]]:
+    return [
         _execution_policy(
             policy_key="mock-default",
             provider_adapter="mock",
@@ -713,6 +713,20 @@ def seed_execution_policies(connection) -> None:
             auth_model="none",
             enabled=True,
             version="phase2-earthsearch-v1",
+        ),
+        _execution_policy(
+            policy_key="planetary-computer-default",
+            provider_adapter="planetary-computer",
+            auth_model="anonymous_sas_signing",
+            enabled=True,
+            version="landsat-c2-l2-planetary-computer-v1",
+        ),
+        _execution_policy(
+            policy_key="earthsearch-requester-pays",
+            provider_adapter="earthsearch",
+            auth_model="aws_requester_pays",
+            enabled=False,
+            version="landsat-c2-l2-earthsearch-requester-pays-v1",
         ),
         _execution_policy(
             policy_key="cdse-default",
@@ -746,6 +760,10 @@ def seed_execution_policies(connection) -> None:
             version="phase1-v1",
         ),
     ]
+
+
+def seed_execution_policies(connection) -> None:
+    policies = build_execution_policies()
     for policy in policies:
         connection.execute(
             text(
