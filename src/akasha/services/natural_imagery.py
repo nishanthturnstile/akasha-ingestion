@@ -9,6 +9,10 @@ from akasha.processing.eos04 import (
     EOS04_PGSTAC_COLLECTION_ID,
     EOS04_SOURCE_ID,
 )
+from akasha.processing.landsat import (
+    LANDSAT_PGSTAC_COLLECTION_ID,
+    LANDSAT_SOURCE_ID,
+)
 from akasha.processing.nisar import (
     NISAR_DEFAULT_RESCALE,
     NISAR_PGSTAC_COLLECTION_ID,
@@ -41,7 +45,7 @@ class NaturalImageryService:
         for scene in scenes:
             if scene.status != "accepted" or scene.acquisition_at is None:
                 continue
-            asset = self._backscatter_asset(scene.id)
+            asset = self._display_asset(scene.id, source_id)
             if asset is None or not scene.pgstac_item_id:
                 continue
             grouped[scene.acquisition_at.date()].append((scene, asset))
@@ -57,7 +61,10 @@ class NaturalImageryService:
                     datetime=scene.acquisition_at,
                     tileAvailable=tile_available,
                     sceneCount=len(entries),
-                    bounds=_bounds(asset.metadata.get("bbox")),
+                    bounds=(
+                        _bounds(asset.metadata.get("bbox"))
+                        or _geometry_bounds(scene.scene_geometry)
+                    ),
                     polarizations=[
                         str(value) for value in asset.metadata.get("polarizations", [])
                     ],
@@ -66,7 +73,7 @@ class NaturalImageryService:
                         if tile_available
                         else (
                             f"Multiple same-date {_source_label(source_id)} scenes require "
-                            "a SAR mosaic backend."
+                            f"a {'SAR ' if source_id != LANDSAT_SOURCE_ID else ''}mosaic backend."
                         )
                     ),
                 )
@@ -115,26 +122,31 @@ class NaturalImageryService:
             z=z,
             x=x,
             y=y,
-            assets="backscatter",
-            asset_bidx=f"backscatter|{band_index}",
+            assets=profile["asset_key"],
+            asset_bidx=(
+                profile["asset_bidx"]
+                if source_id == LANDSAT_SOURCE_ID
+                else f"backscatter|{band_index}"
+            ),
             rescale=profile["rescale"],
         )
 
-    def _backscatter_asset(self, scene_id: str | None):
+    def _display_asset(self, scene_id: str | None, source_id: str):
         if not scene_id:
             return None
+        asset_key = "analytic" if source_id == LANDSAT_SOURCE_ID else "backscatter"
         return next(
             (
                 asset
                 for asset in self._asset_repository.list_for_scene(scene_id)
-                if asset.asset_key == "backscatter"
+                if asset.asset_key == asset_key and asset.asset_kind in {"analytic", "prepared"}
             ),
             None,
         )
 
     @staticmethod
     def _validate_source(source_id: str) -> None:
-        if source_id not in {EOS04_SOURCE_ID, NISAR_SOURCE_ID}:
+        if source_id not in {EOS04_SOURCE_ID, NISAR_SOURCE_ID, LANDSAT_SOURCE_ID}:
             raise NaturalImageryNotFound("natural imagery source is not supported")
 
 
@@ -144,13 +156,60 @@ def _bounds(value: Any) -> list[float] | None:
     return [float(item) for item in value]
 
 
+def _geometry_bounds(value: Any) -> list[float] | None:
+    if not isinstance(value, dict):
+        return None
+    coordinates = value.get("coordinates")
+    points: list[tuple[float, float]] = []
+
+    def collect(node: Any) -> None:
+        if (
+            isinstance(node, (list, tuple))
+            and len(node) >= 2
+            and isinstance(node[0], (int, float))
+            and isinstance(node[1], (int, float))
+        ):
+            points.append((float(node[0]), float(node[1])))
+            return
+        if isinstance(node, (list, tuple)):
+            for child in node:
+                collect(child)
+
+    collect(coordinates)
+    if not points:
+        return None
+    xs, ys = zip(*points, strict=True)
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+
 def _source_profile(source_id: str) -> dict[str, str]:
     if source_id == EOS04_SOURCE_ID:
-        return {"collection_id": EOS04_PGSTAC_COLLECTION_ID, "rescale": EOS04_DEFAULT_RESCALE}
+        return {
+            "collection_id": EOS04_PGSTAC_COLLECTION_ID,
+            "asset_key": "backscatter",
+            "asset_bidx": "backscatter|1",
+            "rescale": EOS04_DEFAULT_RESCALE,
+        }
     if source_id == NISAR_SOURCE_ID:
-        return {"collection_id": NISAR_PGSTAC_COLLECTION_ID, "rescale": NISAR_DEFAULT_RESCALE}
+        return {
+            "collection_id": NISAR_PGSTAC_COLLECTION_ID,
+            "asset_key": "backscatter",
+            "asset_bidx": "backscatter|1",
+            "rescale": NISAR_DEFAULT_RESCALE,
+        }
+    if source_id == LANDSAT_SOURCE_ID:
+        return {
+            "collection_id": LANDSAT_PGSTAC_COLLECTION_ID,
+            "asset_key": "analytic",
+            "asset_bidx": "analytic|3,2,1",
+            "rescale": "0,0.3",
+        }
     raise NaturalImageryNotFound("natural imagery source is not supported")
 
 
 def _source_label(source_id: str) -> str:
-    return "NISAR" if source_id == NISAR_SOURCE_ID else "EOS-04"
+    if source_id == NISAR_SOURCE_ID:
+        return "NISAR"
+    if source_id == LANDSAT_SOURCE_ID:
+        return "Landsat 8/9"
+    return "EOS-04"
