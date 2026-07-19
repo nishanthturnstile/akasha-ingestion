@@ -54,6 +54,16 @@ SEED_SOURCES: tuple[SourceResponse, ...] = (
         supported_indices=[],
     ),
     SourceResponse(
+        source_id="nisar-ssar-beta-gcov",
+        catalog_slug="nisar-ssar",
+        provider_adapter="bhoonidhi",
+        instrument_mode="S-SAR",
+        analysis_level="L2-GCOV",
+        schedule_state="manual",
+        product_exposure="hidden",
+        supported_indices=[],
+    ),
+    SourceResponse(
         source_id="landsat-c2-l2",
         catalog_slug="landsat-c2",
         provider_adapter="earthsearch",

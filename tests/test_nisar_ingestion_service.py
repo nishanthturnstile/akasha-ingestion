@@ -98,6 +98,31 @@ def test_nisar_full_pipeline_is_capped_idempotent_and_catalogs_backscatter(
     assert summary["downloaded_count"] == 1
     assert summary["prepared_count"] == 1
     assert summary["registered_count"] == 1
+    assert summary["candidate_evidence"] == [
+        {
+            "provider_product_id": "NISAR-GRAZING",
+            "acquisition_datetime": "2026-07-12T05:30:00Z",
+            "bbox": [77.0, 12.0, 78.0, 13.0],
+            "online": True,
+            "intersects_aoi": True,
+            "selected": False,
+        },
+        {
+            "provider_product_id": "NISAR-COVERING",
+            "acquisition_datetime": "2026-07-12T05:30:00Z",
+            "bbox": [77.0, 12.0, 78.0, 13.0],
+            "online": True,
+            "intersects_aoi": True,
+            "selected": True,
+        },
+    ]
+    assert summary["download_evidence"] == [
+        {
+            "provider_product_id": "NISAR-COVERING",
+            "archive_size_bytes": len(b"zip:NISAR-COVERING"),
+            "checksum_sha256": sha256(b"zip:NISAR-COVERING").hexdigest(),
+        }
+    ]
     scene = scenes.list_for_source_aoi(source_id=NISAR_SOURCE_ID, aoi_id="bangalore")[0]
     assert scene.provider_product_id == "NISAR-COVERING"
     assert scene.pgstac_item_id == summary["item_ids"][0]

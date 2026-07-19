@@ -62,6 +62,8 @@ class NisarBackfillSummary:
     registered_count: int = 0
     product_ids: list[str] = field(default_factory=list)
     item_ids: list[str] = field(default_factory=list)
+    candidate_evidence: list[dict[str, object]] = field(default_factory=list)
+    download_evidence: list[dict[str, object]] = field(default_factory=list)
 
     def metadata(self) -> dict[str, object]:
         return {
@@ -78,6 +80,8 @@ class NisarBackfillSummary:
             "registered_count": self.registered_count,
             "product_ids": list(self.product_ids),
             "item_ids": list(self.item_ids),
+            "candidate_evidence": list(self.candidate_evidence),
+            "download_evidence": list(self.download_evidence),
         }
 
 
@@ -258,8 +262,23 @@ class NisarIngestionService:
             summary.searched_count = len(candidates)
             summary.selected_count = len(selected)
             summary.product_ids = [item.provider_product_id for item in selected]
+            summary.candidate_evidence = [
+                {
+                    "provider_product_id": item.provider_product_id,
+                    "acquisition_datetime": item.acquisition_datetime,
+                    "bbox": list(item.bbox),
+                    "online": item.online,
+                    "intersects_aoi": item.intersects_aoi,
+                    "selected": item in selected,
+                }
+                for item in candidates[: self._settings.backfill_search_item_cap]
+            ]
             stage.metadata.update(
-                {"searched_count": len(candidates), "selected_product_ids": summary.product_ids}
+                {
+                    "searched_count": len(candidates),
+                    "selected_product_ids": summary.product_ids,
+                    "candidate_evidence": summary.candidate_evidence,
+                }
             )
             return selected
 
@@ -298,7 +317,20 @@ class NisarIngestionService:
                     _DownloadedProduct(candidate, downloaded_path, object_path, checksum)
                 )
             summary.downloaded_count = len(downloads)
-            stage.metadata["downloaded_count"] = len(downloads)
+            summary.download_evidence = [
+                {
+                    "provider_product_id": download.candidate.provider_product_id,
+                    "archive_size_bytes": download.path.stat().st_size,
+                    "checksum_sha256": download.checksum_sha256,
+                }
+                for download in downloads
+            ]
+            stage.metadata.update(
+                {
+                    "downloaded_count": len(downloads),
+                    "download_evidence": summary.download_evidence,
+                }
+            )
         return downloads
 
     def _prepare(
