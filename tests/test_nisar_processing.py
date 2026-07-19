@@ -63,6 +63,23 @@ def test_prepare_nisar_gcov_writes_masked_multiband_db_cog(tmp_path: Path) -> No
         assert dataset.read(2)[1, 1] == pytest.approx(-20.0)
 
 
+def test_prepare_nisar_accepts_direct_hdf5_with_provider_zip_filename(
+    tmp_path: Path,
+) -> None:
+    provider_path = _gcov_hdf(tmp_path / "original.zip")
+
+    prepared = prepare_nisar_product(
+        SelectedNisarProduct("NISAR_DIRECT_HDF5", provider_path, None, "aoi"),
+        Settings(runtime_backend=RuntimeBackend.MEMORY, scratch_dir=tmp_path / "scratch"),
+        dry_run=True,
+    )
+
+    assert prepared.polarizations == ("HH", "HV")
+    assert prepared.manifest["identification"]["input_backscatter_normalization"] == (
+        "gamma0"
+    )
+
+
 def test_prepare_nisar_accepts_declared_single_polarization(tmp_path: Path) -> None:
     hdf_path = _gcov_hdf(tmp_path / "single-pol.h5")
     with h5py.File(hdf_path, "r+") as handle:
@@ -196,9 +213,13 @@ def _gcov_hdf(
         grid.create_dataset("mask", data=mask)
         hh = np.full((1024, 1024), 0.1, dtype="float32")
         hv = np.full((1024, 1024), 0.01, dtype="float32")
-        grid.create_dataset("HHHH", data=hh, chunks=(16, 16))
+        hh_dataset = grid.create_dataset("HHHH", data=hh, chunks=(16, 16))
+        hh_dataset.attrs["description"] = "Covariance between HH and HH in Gamma0"
+        hh_dataset.attrs["long_name"] = "radar backscatter gamma0"
         grid.create_dataset("HHHV", data=np.ones((1024, 1024), dtype="complex64"))
-        grid.create_dataset("HVHV", data=hv, chunks=(16, 16))
+        hv_dataset = grid.create_dataset("HVHV", data=hv, chunks=(16, 16))
+        hv_dataset.attrs["description"] = "Covariance between HV and HV in Gamma0"
+        hv_dataset.attrs["long_name"] = "radar backscatter gamma0"
 
         parameters = handle.create_group(
             "/science/SSAR/GCOV/metadata/processingInformation/parameters"
@@ -209,5 +230,18 @@ def _gcov_hdf(
         rtc_group = parameters.create_group("rtc")
         rtc_group.create_dataset(
             "outputBackscatterNormalizationConvention", data=np.bytes_(normalization)
+        )
+        rtc_group.create_dataset(
+            "inputBackscatterNormalizationConvention", data=np.bytes_(normalization)
+        )
+        rtc_group.create_dataset(
+            "outputBackscatterExpressionConvention", data=np.bytes_("NRB")
+        )
+        ceos = handle.create_group(
+            "/science/SSAR/GCOV/metadata/ceosAnalysisReadyData"
+        )
+        ceos.create_dataset(
+            "outputBackscatterDecibelConversionFormula",
+            data=np.bytes_("10*log10(<GCOV_TERM>)"),
         )
     return path

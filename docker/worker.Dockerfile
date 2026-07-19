@@ -8,7 +8,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libcurl4 libexpat1 libsqlite3-0 \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        gdal-bin \
+        hdf5-tools \
+        libcurl4 \
+        libexpat1 \
+        libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml README.md ./
 COPY worker.py ./worker.py

@@ -150,6 +150,8 @@ class SyncRequest(BaseModel):
                     "nisar_backfill mode must be metadata_only, download_only, prepare_only, "
                     "or full_pipeline"
                 )
+            if (self.date_end - self.date_start).days > 366:
+                raise ValueError("nisar_backfill date range must not exceed 366 days")
         elif self.provider_route is not None:
             raise ValueError("provider_route is not supported for mock_sync")
         return self

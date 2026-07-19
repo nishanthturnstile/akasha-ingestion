@@ -424,6 +424,23 @@ class MinIOObjectStore:
         if metadata:
             object_metadata.update(metadata)
         try:
+            try:
+                existing = self._client.stat_object(self._bucket, object_path)
+            except S3Error as exc:
+                if exc.code not in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}:
+                    raise
+            else:
+                existing_metadata = dict(existing.metadata or {})
+                existing_checksum = next(
+                    (
+                        str(value)
+                        for key, value in existing_metadata.items()
+                        if str(key).lower().endswith("sha256")
+                    ),
+                    None,
+                )
+                if existing.size == file_path.stat().st_size and existing_checksum == checksum:
+                    return object_path, checksum
             self._client.fput_object(
                 self._bucket,
                 object_path,
