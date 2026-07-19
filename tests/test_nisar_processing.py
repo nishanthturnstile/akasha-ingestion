@@ -42,6 +42,8 @@ def test_prepare_nisar_gcov_writes_masked_multiband_db_cog(tmp_path: Path) -> No
     assert prepared.polarizations == ("HH", "HV")
     assert prepared.manifest["sar:frequency_band"] == "S"
     assert prepared.manifest["calibration_formula"] == "10*log10(gamma0_power)"
+    with prepared.backscatter_path.open("rb") as output:
+        assert output.read(4) in {b"II+\x00", b"MM\x00+"}
     assert prepared.manifest["outputs"]["backscatter"]["checksum_sha256"] == (
         prepared.checksum_sha256
     )

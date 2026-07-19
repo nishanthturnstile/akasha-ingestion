@@ -127,7 +127,12 @@ def prepare_nisar_product(
         intermediate = output_root / "backscatter.intermediate.tif"
         output_path = output_root / "backscatter.tif"
         valid_pixel_counts = write_gamma0_backscatter(assets, intermediate)
-        translate_cog_file(intermediate, output_path, overview_resampling="average")
+        translate_cog_file(
+            intermediate,
+            output_path,
+            overview_resampling="average",
+            bigtiff=True,
+        )
         intermediate.unlink(missing_ok=True)
         validate_nisar_cog(output_path, tuple(pol for pol, _ in assets.terms))
         bbox = _wgs84_bounds(output_path)
