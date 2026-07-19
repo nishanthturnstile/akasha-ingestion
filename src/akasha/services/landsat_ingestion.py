@@ -6,6 +6,8 @@ from datetime import UTC, date, datetime
 import numpy as np
 from rasterio.enums import Resampling
 from rasterio.warp import reproject
+from shapely.errors import GEOSException
+from shapely.geometry import shape
 
 from akasha.catalog.asset_repository import SceneAssetRecord
 from akasha.catalog.backfill_repository import BackfillRunRecord
@@ -42,6 +44,7 @@ from akasha.schemas import SyncRequest
 from akasha.services.source_mirroring import SourceMirroringService
 
 _ANALYTIC_NODATA = -9999.0
+LANDSAT_SELECTION_POLICY_VERSION = "landsat-aoi-coverage-selection-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +72,7 @@ class LandsatBackfillSummary:
             "failed_items": self.failed_items,
             "processing_profile_version": "landsat-8-9-c2-l2-sr-qa-v1",
             "mask_profile_version": LANDSAT_MASK_PROFILE_VERSION,
+            "selection_policy_version": LANDSAT_SELECTION_POLICY_VERSION,
         }
 
 
@@ -139,7 +143,9 @@ class LandsatIngestionService:
             date_end=request.date_end.isoformat(),
             mode=request.mode,
             request_params_version=(
-                f"{self._settings.request_params_version}:{self._settings.landsat_mask_profile_version}"
+                f"{self._settings.request_params_version}:"
+                f"{self._settings.landsat_mask_profile_version}:"
+                f"{LANDSAT_SELECTION_POLICY_VERSION}"
             ),
             processing_profile_version=self._settings.landsat_profile_version,
         )
@@ -191,7 +197,7 @@ class LandsatIngestionService:
                     max_items=self._settings.backfill_search_item_cap,
                 )
             )
-            items.sort(key=_item_selection_key)
+            items.sort(key=lambda item: _item_selection_key(item, aoi.geometry))
             summary = self._process_items(job=job, items=items, mode=mode)
             self._stage_store.mark_completed(stage.stage_id, metadata=summary.to_metadata())
             self._upsert_summary(job, summary)
@@ -676,12 +682,32 @@ def _match_grid(source: RasterBand, reference: RasterBand, resampling: Resamplin
     return destination
 
 
-def _item_selection_key(item: NormalizedStacItem) -> tuple[float, str, str]:
+def _item_selection_key(
+    item: NormalizedStacItem,
+    aoi_geometry: dict[str, object],
+) -> tuple[float, float, str, str]:
     return (
+        -_aoi_overlap_ratio(item, aoi_geometry),
         float(item.cloud_percent if item.cloud_percent is not None else 101.0),
         item.platform or "",
         item.stac_item_id,
     )
+
+
+def _aoi_overlap_ratio(
+    item: NormalizedStacItem,
+    aoi_geometry: dict[str, object],
+) -> float:
+    if item.footprint is None:
+        return 0.0
+    try:
+        aoi = shape(aoi_geometry)
+        footprint = shape(item.footprint)
+        if aoi.is_empty or footprint.is_empty or aoi.area <= 0:
+            return 0.0
+        return max(0.0, min(1.0, footprint.intersection(aoi).area / aoi.area))
+    except (GEOSException, TypeError, ValueError):
+        return 0.0
 
 
 class _EmptyProvider:
