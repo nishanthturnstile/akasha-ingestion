@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, date, datetime
 from urllib.parse import urlparse
 
@@ -26,7 +26,11 @@ from akasha.providers.contracts import NormalizedAsset, NormalizedStacItem, Prov
 from akasha.scheduler.source_registry import landsat_source_state
 from akasha.schemas import FieldIndexRequest, SyncRequest
 from akasha.services.analytics import AnalyticsService
-from akasha.services.landsat_ingestion import LandsatIngestionService
+from akasha.services.landsat_ingestion import (
+    LANDSAT_SELECTION_POLICY_VERSION,
+    LandsatIngestionService,
+    _item_selection_key,
+)
 from akasha.services.readiness import ReadinessService
 from akasha.services.source_mirroring import SourceMirroringService
 from akasha.storage.object_store import InMemoryObjectStore
@@ -94,6 +98,7 @@ def test_landsat_backfill_is_idempotent_and_field_ndvi_is_available(tmp_path) ->
     assert summary["mirrored_asset_count"] == len(LANDSAT_REQUIRED_ASSETS)
     assert summary["processed_count"] == 6
     assert summary["failed_count"] == 0
+    assert summary["selection_policy_version"] == LANDSAT_SELECTION_POLICY_VERSION
     assert len(pgstac_repository.items) == 1
 
     scene = scene_repository.list_for_source_aoi(
@@ -176,6 +181,39 @@ def test_landsat_backfill_is_idempotent_and_field_ndvi_is_available(tmp_path) ->
     source_state = landsat_source_state(settings)
     assert source_state.schedule_state == "manual"
     assert source_state.product_exposure == "public"
+
+
+def test_landsat_selection_prioritizes_aoi_coverage_before_cloud() -> None:
+    aoi = _field_geometry()
+    low_cloud_edge = replace(
+        _item(),
+        stac_item_id="LC09_L2SP_144050_20260115_02_T1",
+        footprint={
+            "type": "Polygon",
+            "coordinates": [
+                [
+                    [77.0, 13.0],
+                    [77.001, 13.0],
+                    [77.001, 12.996],
+                    [77.0, 12.996],
+                    [77.0, 13.0],
+                ]
+            ],
+        },
+        cloud_percent=0.01,
+    )
+    higher_cloud_full_coverage = replace(
+        _item(),
+        stac_item_id="LC09_L2SP_144051_20260115_02_T1",
+        cloud_percent=5.0,
+    )
+
+    selected = min(
+        [low_cloud_edge, higher_cloud_full_coverage],
+        key=lambda item: _item_selection_key(item, aoi),
+    )
+
+    assert selected.stac_item_id == higher_cloud_full_coverage.stac_item_id
 
 
 class _Provider:
