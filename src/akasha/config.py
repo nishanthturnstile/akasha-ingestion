@@ -229,6 +229,13 @@ class Settings(BaseSettings):
     landsat_preload_refresh_days: int = Field(default=8, gt=0)
     landsat_revisit_days: int = Field(default=8, gt=0)
     landsat_preload_freshness_max_age_hours: int = Field(default=192, gt=0)
+    landsat_readiness_enabled: bool = False
+    landsat_readiness_required_indices: Annotated[tuple[str, ...], NoDecode] = (
+        "ndvi",
+        "msavi",
+        "ndmi",
+        "ndwi_green_nir",
+    )
     landsat_max_new_scenes_per_run: int = Field(default=1, gt=0, le=1)
     landsat_search_cloud_hint_percentage: float = Field(default=80.0, ge=0, le=100)
     landsat_preload_schedule_enabled: bool = False
@@ -266,6 +273,7 @@ class Settings(BaseSettings):
         "resourcesat_liss3_readiness_required_indices",
         "resourcesat_liss4_readiness_required_indices",
         "resourcesat_awifs_readiness_required_indices",
+        "landsat_readiness_required_indices",
         mode="before",
     )
     @classmethod

@@ -23,9 +23,11 @@ from akasha.jobs.store import InMemoryJobStore
 from akasha.processing.cog import write_cog_bytes
 from akasha.processing.landsat import LANDSAT_REQUIRED_ASSETS
 from akasha.providers.contracts import NormalizedAsset, NormalizedStacItem, ProviderSearchRequest
+from akasha.scheduler.source_registry import landsat_source_state
 from akasha.schemas import FieldIndexRequest, SyncRequest
 from akasha.services.analytics import AnalyticsService
 from akasha.services.landsat_ingestion import LandsatIngestionService
+from akasha.services.readiness import ReadinessService
 from akasha.services.source_mirroring import SourceMirroringService
 from akasha.storage.object_store import InMemoryObjectStore
 
@@ -38,6 +40,8 @@ def test_landsat_backfill_is_idempotent_and_field_ndvi_is_available(tmp_path) ->
         scratch_dir=tmp_path,
         public_base_url="http://testserver",
         signing_secret="test-signing-secret",
+        landsat_readiness_enabled=True,
+        landsat_preload_freshness_max_age_hours=100_000,
     )
     object_store = InMemoryObjectStore()
     scene_repository = InMemorySceneRepository()
@@ -56,8 +60,9 @@ def test_landsat_backfill_is_idempotent_and_field_ndvi_is_available(tmp_path) ->
             transport=httpx.MockTransport(_asset_handler(_source_payloads()))
         ),
     )
+    job_store = InMemoryJobStore()
     service = LandsatIngestionService(
-        job_store=InMemoryJobStore(),
+        job_store=job_store,
         stage_store=InMemoryStageStore(),
         backfill_repository=InMemoryBackfillRepository(),
         settings=settings,
@@ -154,6 +159,23 @@ def test_landsat_backfill_is_idempotent_and_field_ndvi_is_available(tmp_path) ->
     assert result.resolution.nativeMeters == 30
     assert result.statistics.usablePixelPercentage == 100
     assert urlparse(result.overlayUrl or "").netloc == "testserver"
+
+    readiness = ReadinessService(
+        settings=settings,
+        job_store=job_store,
+        scene_repository=scene_repository,
+        raster_repository=raster_repository,
+    ).readiness(
+        source_id="landsat-c2-l2",
+        aoi_id="bangalore_60km_geodesic_aoi",
+    )
+    assert readiness.status == "AVAILABLE"
+    assert readiness.availableDates == [date(2026, 1, 15)]
+    assert set(readiness.indexCoverage) == {"NDVI", "MSAVI", "NDMI", "NDWI_GREEN_NIR"}
+
+    source_state = landsat_source_state(settings)
+    assert source_state.schedule_state == "manual"
+    assert source_state.product_exposure == "public"
 
 
 class _Provider:

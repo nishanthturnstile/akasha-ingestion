@@ -7,6 +7,11 @@ on:
         description: Existing immutable image SHA to deploy or roll back to. Leave blank to build this commit.
         required: false
         type: string
+      run_landsat_validation:
+        description: Run one capped Landsat full-pipeline job and require readiness after deployment.
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - main
@@ -88,6 +93,7 @@ jobs:
       AKASHA_STAGING_HEALTH_URL: ${{ vars.AKASHA_STAGING_HEALTH_URL }}
       GHCR_USERNAME: ${{ github.actor }}
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RUN_LANDSAT_VALIDATION: ${{ inputs.run_landsat_validation && 'true' || 'false' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -273,6 +279,116 @@ jobs:
             HEALTH_URL="http://${CADDY_BIND_HOST}:${CADDY_BIND_PORT}/health"
           fi
           curl -fsS --retry 12 --retry-delay 5 --max-time 10 "$HEALTH_URL" >/dev/null
+
+      - name: Run capped Landsat live validation
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_landsat_validation }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i ~/.ssh/akasha_staging_deploy -p ${AKASHA_STAGING_SSH_PORT} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          ssh ${SSH_OPTS} "${AKASHA_STAGING_USER}@${AKASHA_STAGING_HOST}" \
+            "DEPLOY_BASE_DIR='${DEPLOY_BASE_DIR}' PROJECT_NAME='${PROJECT_NAME}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "${DEPLOY_BASE_DIR}/deploy"
+          COMPOSE="docker compose --project-name ${PROJECT_NAME} --profile tools --env-file .env -f docker-compose.rendered.json"
+          job_id="$(${COMPOSE} exec -T scheduler python -c '
+          from datetime import UTC, datetime, timedelta
+          from akasha.config import get_settings
+          from akasha.jobs.landsat_tasks import _create_service
+          from akasha.schemas import SyncRequest
+          settings = get_settings()
+          end_date = datetime.now(UTC).date() - timedelta(days=1)
+          start_date = end_date - timedelta(days=settings.landsat_preload_date_window_days - 1)
+          job = _create_service().start_backfill(SyncRequest(
+              source_id=settings.landsat_preload_source_id,
+              provider_route=settings.landsat_preload_provider_route,
+              aoi_id=settings.landsat_preload_aoi_id,
+              date_start=start_date,
+              date_end=end_date,
+              job_type="landsat_backfill",
+              mode="full_pipeline",
+          ))
+          print(job.job_id)
+          ' | tail -n 1 | tr -d '\r')"
+          if ! printf '%s' "$job_id" | grep -Eq '^[0-9a-f-]{36}$'; then
+            echo "Landsat validation did not return a job ID: ${job_id}"
+            exit 1
+          fi
+          echo "Waiting for capped Landsat job ${job_id}"
+          for attempt in $(seq 1 90); do
+            job_json="$(${COMPOSE} exec -T api python -c '
+          import json
+          import sys
+          from akasha.config import get_settings
+          from akasha.runtime import create_engine_if_needed, create_job_store
+          settings = get_settings()
+          job = create_job_store(settings, create_engine_if_needed(settings)).get(sys.argv[1])
+          print(json.dumps({
+              "status": job.status.value if job else "missing",
+              "summary": job.result_metadata.get("backfill_summary", {}) if job else {},
+              "error": job.error if job else None,
+          }))
+          ' "$job_id" | tail -n 1)"
+            status="$(JOB_JSON="$job_json" python3 -c 'import json, os; print(json.loads(os.environ["JOB_JSON"])["status"])')"
+            if [ "$status" = "completed" ]; then
+              JOB_JSON="$job_json" python3 - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["JOB_JSON"])
+          summary = payload.get("summary") or {}
+          if int(summary.get("processed_count") or 0) <= 0:
+              raise SystemExit("Landsat validation completed without processed outputs")
+          if int(summary.get("failed_count") or 0) != 0:
+              raise SystemExit("Landsat validation completed with failed items")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+              break
+            fi
+            if [ "$status" = "failed" ]; then
+              echo "$job_json"
+              exit 1
+            fi
+            if [ "$attempt" -eq 90 ]; then
+              echo "Timed out waiting for Landsat validation: ${job_json}"
+              exit 1
+            fi
+            sleep 20
+          done
+          readiness="$(${COMPOSE} exec -T api python -c '
+          import json
+          from akasha.config import get_settings
+          from akasha.runtime import (
+              create_engine_if_needed,
+              create_job_store,
+              create_raster_repository,
+              create_scene_repository,
+          )
+          from akasha.services.readiness import ReadinessService
+          settings = get_settings()
+          engine = create_engine_if_needed(settings)
+          result = ReadinessService(
+              settings=settings,
+              job_store=create_job_store(settings, engine),
+              scene_repository=create_scene_repository(settings, engine),
+              raster_repository=create_raster_repository(settings, engine),
+          ).readiness(
+              source_id=settings.landsat_preload_source_id,
+              aoi_id=settings.landsat_preload_aoi_id,
+          )
+          print(result.model_dump_json(by_alias=True))
+          ' | tail -n 1)"
+          READINESS_JSON="$readiness" python3 - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["READINESS_JSON"])
+          if payload.get("status") != "AVAILABLE":
+              raise SystemExit("Landsat readiness is not AVAILABLE: " + json.dumps(payload))
+          if not payload.get("availableDates"):
+              raise SystemExit("Landsat readiness returned no available dates")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+          REMOTE
 
       - name: Rollback instructions
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.image_sha != '' }}
