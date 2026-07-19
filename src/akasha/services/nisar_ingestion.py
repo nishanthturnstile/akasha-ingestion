@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import shutil
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
+
+import h5py
 
 from akasha.catalog.asset_repository import SceneAssetRecord
 from akasha.catalog.pgstac_repository import build_nisar_backscatter_item
@@ -91,6 +94,7 @@ class _DownloadedProduct:
     path: Path
     object_path: str
     checksum_sha256: str
+    package_format: str
 
 
 class NisarIngestionService:
@@ -216,8 +220,10 @@ class NisarIngestionService:
                 summary.item_ids = item_ids
                 summary.registered_count = len(item_ids)
                 stage.metadata["item_ids"] = item_ids
-            with self._stage(job, "cleanup", {"retained_for_audit": True}):
-                pass
+            with self._stage(job, "cleanup", {"durable_objects_retained": True}) as stage:
+                stage.metadata["removed_local_paths"] = self._cleanup_local_artifacts(
+                    job, prepared
+                )
             return self._complete(job, summary, started_at)
         except Exception as exc:
             self._job_store.mark_failed(job, error=redact_string(str(exc)))
@@ -305,16 +311,26 @@ class NisarIngestionService:
                 )
                 downloaded_path = Path(str(result["path"]))
                 checksum = str(result.get("sha256") or file_sha256(downloaded_path))
+                package_format = _nisar_package_format(downloaded_path)
                 object_path, checksum = self._object_store.put_raw_file(
                     provider="bhoonidhi",
                     source_id=NISAR_SOURCE_ID,
                     product_id=candidate.provider_product_id,
                     file_path=downloaded_path,
                     checksum_sha256=checksum,
-                    metadata={"provider-route": NISAR_PROVIDER_ROUTE},
+                    metadata={
+                        "provider-route": NISAR_PROVIDER_ROUTE,
+                        "source-format": package_format,
+                    },
                 )
                 downloads.append(
-                    _DownloadedProduct(candidate, downloaded_path, object_path, checksum)
+                    _DownloadedProduct(
+                        candidate,
+                        downloaded_path,
+                        object_path,
+                        checksum,
+                        package_format,
+                    )
                 )
             summary.downloaded_count = len(downloads)
             summary.download_evidence = [
@@ -322,6 +338,7 @@ class NisarIngestionService:
                     "provider_product_id": download.candidate.provider_product_id,
                     "archive_size_bytes": download.path.stat().st_size,
                     "checksum_sha256": download.checksum_sha256,
+                    "package_format": download.package_format,
                 }
                 for download in downloads
             ]
@@ -459,6 +476,28 @@ class NisarIngestionService:
             self._pgstac_repository.upsert_item_json(item)
         return item.id
 
+    def _cleanup_local_artifacts(
+        self,
+        job: Job,
+        prepared: list[PreparedNisarScene],
+    ) -> list[str]:
+        scratch = Path(self._settings.scratch_dir).resolve()
+        targets = {
+            scratch / "nisar-downloads" / job.job_id,
+            *(
+                scratch / "nisar-prepare" / _safe_component(scene.product_id)
+                for scene in prepared
+            ),
+        }
+        removed: list[str] = []
+        for target in sorted(targets):
+            resolved = target.resolve()
+            if scratch not in resolved.parents or not resolved.exists():
+                continue
+            shutil.rmtree(resolved)
+            removed.append(str(resolved.relative_to(scratch)))
+        return removed
+
     def _require_dependencies(self, mode: str) -> None:
         if self._aoi_repository is None:
             raise ValueError("NISAR backfill requires an AOI repository")
@@ -545,6 +584,14 @@ def _candidate_geometry(candidate: BhoonidhiCandidate) -> dict[str, Any]:
 def _safe_component(value: str) -> str:
     safe = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value)
     return safe[:120] or "nisar"
+
+
+def _nisar_package_format(path: Path) -> str:
+    if h5py.is_hdf5(path):
+        return "direct_hdf5"
+    if zipfile.is_zipfile(path):
+        return "zip"
+    raise ValueError("Bhoonidhi NISAR download is neither HDF5 nor ZIP")
 
 
 def _disk_usage_path(path: Path) -> Path:

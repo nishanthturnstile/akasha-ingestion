@@ -111,7 +111,7 @@ def prepare_nisar_product(
     output_root.mkdir(parents=True, exist_ok=True)
 
     try:
-        if product.package_path.suffix.lower() in {".h5", ".hdf5"}:
+        if h5py.is_hdf5(product.package_path):
             extract_root.mkdir(parents=True, exist_ok=True)
             source_root = product.package_path.parent
             explicit_hdf = product.package_path
@@ -248,6 +248,7 @@ def discover_gcov_assets(root: Path, *, explicit_hdf: Path | None = None) -> Nis
                 ProviderErrorCategory.INVALID_PRODUCT,
                 "NISAR GCOV contains no declared real diagonal covariance terms.",
             )
+        _validate_gamma0_contract(handle, metadata, terms)
         if "mask" not in grid or "numberOfSubSwaths" not in grid:
             raise NisarPrepareError(
                 ProviderErrorCategory.INVALID_PRODUCT,
@@ -423,6 +424,17 @@ def _identification_metadata(group: h5py.Group, handle: h5py.File) -> dict[str, 
         "output_backscatter_normalization": _optional_path_scalar(
             handle, f"{processing_parameters}/rtc/outputBackscatterNormalizationConvention"
         ),
+        "input_backscatter_normalization": _optional_path_scalar(
+            handle, f"{processing_parameters}/rtc/inputBackscatterNormalizationConvention"
+        ),
+        "output_backscatter_expression": _optional_path_scalar(
+            handle, f"{processing_parameters}/rtc/outputBackscatterExpressionConvention"
+        ),
+        "output_backscatter_decibel_formula": _optional_path_scalar(
+            handle,
+            "/science/SSAR/GCOV/metadata/ceosAnalysisReadyData/"
+            "outputBackscatterDecibelConversionFormula",
+        ),
         "software_version": _optional_path_scalar(handle, f"{algorithms}/softwareVersion"),
     }
 
@@ -455,11 +467,44 @@ def _validate_identification(metadata: dict[str, Any]) -> None:
             ProviderErrorCategory.INVALID_PRODUCT,
             "NISAR GCOV requires radiometric terrain correction.",
         )
-    normalization = str(metadata.get("output_backscatter_normalization") or "").lower()
-    if "gamma" not in normalization:
+
+
+def _validate_gamma0_contract(
+    handle: h5py.File,
+    metadata: dict[str, Any],
+    terms: list[tuple[str, str]],
+) -> None:
+    """Validate the Beta GCOV NRB/Gamma0 convention without guessing band order."""
+
+    if not terms:
+        return
+    input_normalization = str(metadata.get("input_backscatter_normalization") or "").lower()
+    output_normalization = str(metadata.get("output_backscatter_normalization") or "").lower()
+    layer_descriptions = []
+    for _, path in terms:
+        dataset = handle[path]
+        layer_descriptions.append(
+            " ".join(
+                str(_decode(dataset.attrs.get(key, "")))
+                for key in ("description", "long_name")
+            ).lower()
+        )
+    gamma0_declared = "gamma" in input_normalization or "gamma" in output_normalization
+    gamma0_layers = all("gamma0" in value for value in layer_descriptions)
+    formula = "".join(
+        str(metadata.get("output_backscatter_decibel_formula") or "").lower().split()
+    )
+    if not gamma0_declared or not gamma0_layers or formula != "10*log10(<gcov_term>)":
         raise NisarPrepareError(
             ProviderErrorCategory.INVALID_PRODUCT,
-            "NISAR GCOV output normalization must be Gamma0.",
+            "NISAR GCOV diagonal covariance layers must declare linear Gamma0 and the "
+            "10*log10 conversion formula.",
+            metadata={
+                "input_normalization": metadata.get("input_backscatter_normalization"),
+                "output_normalization": metadata.get("output_backscatter_normalization"),
+                "output_expression": metadata.get("output_backscatter_expression"),
+                "decibel_formula": metadata.get("output_backscatter_decibel_formula"),
+            },
         )
 
 

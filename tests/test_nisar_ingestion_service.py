@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import zipfile
 from datetime import UTC, date, datetime
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -47,6 +49,15 @@ def test_nisar_backfill_requires_exact_source_and_provider_route() -> None:
     with pytest.raises(ValidationError, match="source_id"):
         SyncRequest(
             **{**common, "source_id": "eos-04-sar-mrs-l2b"},
+            provider_route=NISAR_PROVIDER_ROUTE,
+        )
+    with pytest.raises(ValidationError, match="366 days"):
+        SyncRequest(
+            **{
+                **common,
+                "date_start": date(2025, 7, 1),
+                "date_end": date(2026, 7, 19),
+            },
             provider_route=NISAR_PROVIDER_ROUTE,
         )
 
@@ -119,8 +130,9 @@ def test_nisar_full_pipeline_is_capped_idempotent_and_catalogs_backscatter(
     assert summary["download_evidence"] == [
         {
             "provider_product_id": "NISAR-COVERING",
-            "archive_size_bytes": len(b"zip:NISAR-COVERING"),
-            "checksum_sha256": sha256(b"zip:NISAR-COVERING").hexdigest(),
+            "archive_size_bytes": len(_zip_bytes("NISAR-COVERING")),
+            "checksum_sha256": sha256(_zip_bytes("NISAR-COVERING")).hexdigest(),
+            "package_format": "zip",
         }
     ]
     scene = scenes.list_for_source_aoi(source_id=NISAR_SOURCE_ID, aoi_id="bangalore")[0]
@@ -143,6 +155,7 @@ def test_nisar_full_pipeline_is_capped_idempotent_and_catalogs_backscatter(
         "cleanup",
     }
     assert all(stage.status == StageStatus.COMPLETED for stage in stages)
+    assert not (tmp_path / "nisar-downloads" / first.job_id).exists()
 
 
 def test_nisar_stage_failure_is_redacted_and_worker_loss_is_recoverable(
@@ -223,7 +236,7 @@ class _BhoonidhiClient:
     ) -> dict[str, object]:
         assert collection == "NISAR_SSAR-Beta_GCOV"
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(f"zip:{product_id}".encode())
+        destination.write_bytes(_zip_bytes(product_id))
         return {"path": str(destination), "sha256": sha256(destination.read_bytes()).hexdigest()}
 
 
@@ -293,3 +306,10 @@ def _geometry() -> dict[str, object]:
             [[77.0, 12.0], [78.0, 12.0], [78.0, 13.0], [77.0, 13.0], [77.0, 12.0]]
         ],
     }
+
+
+def _zip_bytes(product_id: str) -> bytes:
+    output = BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        archive.writestr("product.txt", product_id)
+    return output.getvalue()

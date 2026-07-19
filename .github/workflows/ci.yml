@@ -62,3 +62,6 @@ jobs:
         run: |
           docker run --rm akasha-ingestion-worker:ci python -c "import numpy, pypgstac, pystac, pystac_client, rasterio, rio_cogeo, shapely"
           docker run --rm akasha-ingestion-worker:ci rio cogeo --help >/dev/null
+          docker run --rm akasha-ingestion-worker:ci h5ls --version >/dev/null
+          docker run --rm akasha-ingestion-worker:ci h5dump --version >/dev/null
+          docker run --rm akasha-ingestion-worker:ci gdalinfo --version >/dev/null
