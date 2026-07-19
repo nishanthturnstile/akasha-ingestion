@@ -9,6 +9,11 @@ from akasha.processing.eos04 import (
     EOS04_PGSTAC_COLLECTION_ID,
     EOS04_SOURCE_ID,
 )
+from akasha.processing.nisar import (
+    NISAR_DEFAULT_RESCALE,
+    NISAR_PGSTAC_COLLECTION_ID,
+    NISAR_SOURCE_ID,
+)
 from akasha.schemas import NaturalSourceDate, SourceDatesResponse
 
 
@@ -59,7 +64,10 @@ class NaturalImageryService:
                     unavailableReason=(
                         None
                         if tile_available
-                        else "Multiple same-date EOS-04 scenes require a SAR mosaic backend."
+                        else (
+                            f"Multiple same-date {_source_label(source_id)} scenes require "
+                            "a SAR mosaic backend."
+                        )
                     ),
                 )
             )
@@ -81,10 +89,10 @@ class NaturalImageryService:
             None,
         )
         if metadata is None:
-            raise NaturalImageryNotFound("EOS-04 acquisition date not found")
+            raise NaturalImageryNotFound(f"{_source_label(source_id)} acquisition date not found")
         if not metadata.tileAvailable:
             raise NaturalImageryUnavailable(
-                metadata.unavailableReason or "EOS-04 tile is unavailable"
+                metadata.unavailableReason or f"{_source_label(source_id)} tile is unavailable"
             )
         scenes = self._scene_repository.list_candidates(
             source_id=source_id,
@@ -95,16 +103,21 @@ class NaturalImageryService:
         )
         scenes = [scene for scene in scenes if scene.aoi_id == aoi_id and scene.pgstac_item_id]
         if len(scenes) != 1:
-            raise NaturalImageryUnavailable("EOS-04 date does not resolve to exactly one scene")
+            raise NaturalImageryUnavailable(
+                f"{_source_label(source_id)} date does not resolve to exactly one scene"
+            )
+        profile = _source_profile(source_id)
+        polarizations = metadata.polarizations
+        band_index = polarizations.index("HH") + 1 if "HH" in polarizations else 1
         return self._tile_service.fetch_tile(
-            collection_id=EOS04_PGSTAC_COLLECTION_ID,
+            collection_id=profile["collection_id"],
             item_id=scenes[0].pgstac_item_id,
             z=z,
             x=x,
             y=y,
             assets="backscatter",
-            asset_bidx="backscatter|1",
-            rescale=EOS04_DEFAULT_RESCALE,
+            asset_bidx=f"backscatter|{band_index}",
+            rescale=profile["rescale"],
         )
 
     def _backscatter_asset(self, scene_id: str | None):
@@ -121,7 +134,7 @@ class NaturalImageryService:
 
     @staticmethod
     def _validate_source(source_id: str) -> None:
-        if source_id != EOS04_SOURCE_ID:
+        if source_id not in {EOS04_SOURCE_ID, NISAR_SOURCE_ID}:
             raise NaturalImageryNotFound("natural imagery source is not supported")
 
 
@@ -129,3 +142,15 @@ def _bounds(value: Any) -> list[float] | None:
     if not isinstance(value, list) or len(value) != 4:
         return None
     return [float(item) for item in value]
+
+
+def _source_profile(source_id: str) -> dict[str, str]:
+    if source_id == EOS04_SOURCE_ID:
+        return {"collection_id": EOS04_PGSTAC_COLLECTION_ID, "rescale": EOS04_DEFAULT_RESCALE}
+    if source_id == NISAR_SOURCE_ID:
+        return {"collection_id": NISAR_PGSTAC_COLLECTION_ID, "rescale": NISAR_DEFAULT_RESCALE}
+    raise NaturalImageryNotFound("natural imagery source is not supported")
+
+
+def _source_label(source_id: str) -> str:
+    return "NISAR" if source_id == NISAR_SOURCE_ID else "EOS-04"

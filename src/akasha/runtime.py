@@ -270,6 +270,42 @@ def create_eos04_ingestion_service(
     )
 
 
+def create_nisar_ingestion_service(
+    settings: Settings,
+    engine: Engine | None = None,
+    *,
+    job_store: object | None = None,
+    stage_store: object | None = None,
+    aoi_repository: object | None = None,
+    source_provider_route_repository: object | None = None,
+    scene_repository: object | None = None,
+    asset_repository: object | None = None,
+    object_store: object | None = None,
+    pgstac_repository: object | None = None,
+):
+    from akasha.providers.bhoonidhi import BhoonidhiClient
+    from akasha.services.nisar_ingestion import NisarIngestionService
+
+    resolved_pgstac_repository = pgstac_repository
+    if resolved_pgstac_repository is None:
+        resolved_pgstac_repository = create_pgstac_repository(settings, engine)
+    return NisarIngestionService(
+        job_store=job_store or create_job_store(settings, engine),
+        stage_store=stage_store or create_stage_store(settings, engine),
+        settings=settings,
+        aoi_repository=aoi_repository or create_aoi_repository(settings, engine),
+        object_store=object_store or create_object_store(settings),
+        bhoonidhi_client=BhoonidhiClient(settings),
+        source_provider_route_repository=(
+            source_provider_route_repository
+            or create_source_provider_route_repository(settings, engine)
+        ),
+        scene_repository=scene_repository or create_scene_repository(settings, engine),
+        asset_repository=asset_repository or create_asset_repository(settings, engine),
+        pgstac_repository=resolved_pgstac_repository,
+    )
+
+
 def create_field_query_repository(
     settings: Settings,
     engine: Engine | None = None,

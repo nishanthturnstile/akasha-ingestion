@@ -19,6 +19,12 @@ from akasha.processing.eos04 import (
     EOS04_PROCESSING_PROFILE_VERSION,
     EOS04_SOURCE_ID,
 )
+from akasha.processing.nisar import (
+    NISAR_COLLECTION_ID,
+    NISAR_PGSTAC_COLLECTION_ID,
+    NISAR_PROCESSING_PROFILE_VERSION,
+    NISAR_SOURCE_ID,
+)
 from akasha.processing.resourcesat import (
     RESOURCESAT_MASK_CLASSES,
     RESOURCESAT_SOURCE_IDS,
@@ -242,6 +248,80 @@ def build_eos04_backscatter_item(
     return item
 
 
+def build_nisar_backscatter_item(
+    *,
+    scene: ProviderSceneRecord,
+    asset: SceneAssetRecord,
+    bbox: list[float],
+    geometry: dict[str, Any],
+) -> pystac.Item:
+    if scene.source_id != NISAR_SOURCE_ID:
+        raise ValueError("NISAR STAC builder requires the NISAR source")
+    polarizations = [
+        str(value).upper() for value in asset.metadata.get("polarizations", []) if value
+    ]
+    if not polarizations:
+        raise ValueError("NISAR STAC item requires explicit sar:polarizations")
+    identification = dict(scene.provider_metadata.get("identification") or {})
+    item = _base_derived_item(
+        scene=scene,
+        item_id=scene.pgstac_item_id or _nisar_item_id(scene),
+        collection_id=NISAR_PGSTAC_COLLECTION_ID,
+        bbox=bbox,
+        geometry=geometry,
+        stac_extensions=[SAR_EXTENSION, RASTER_EXTENSION, PROJECTION_EXTENSION],
+        properties={
+            "platform": "nisar",
+            "instruments": ["ssar"],
+            "sar:frequency_band": "S",
+            "sar:instrument_mode": "GCOV",
+            "sar:polarizations": polarizations,
+            "sat:orbit_state": str(
+                identification.get("orbit_pass_direction") or ""
+            ).lower()
+            or None,
+            "sat:absolute_orbit": identification.get("absolute_orbit_number"),
+            "akasha:track_number": identification.get("track_number"),
+            "akasha:frame_number": identification.get("frame_number"),
+            "akasha:source_id": NISAR_SOURCE_ID,
+            "akasha:provider_adapter": scene.provider_adapter,
+            "akasha:provider_collection": NISAR_COLLECTION_ID,
+            "akasha:logical_scene_key": scene.logical_scene_key,
+            "akasha:aoi_id": scene.aoi_id,
+            "akasha:processing_profile_version": NISAR_PROCESSING_PROFILE_VERSION,
+            "akasha:product_specification_version": identification.get(
+                "product_specification_version"
+            ),
+            "akasha:rtc_applied": True,
+            "akasha:output_normalization": "gamma0",
+            "akasha:display_only": True,
+        },
+    )
+    if scene.native_crs:
+        item.properties["proj:code"] = scene.native_crs
+    item.add_asset(
+        "backscatter",
+        pystac.Asset(
+            href=str(asset.asset_href or asset.object_path),
+            media_type=pystac.MediaType.COG,
+            roles=["data", "backscatter"],
+            title="NISAR S-SAR GCOV Gamma0 backscatter",
+            extra_fields={
+                "raster:bands": [
+                    {
+                        "name": polarization,
+                        "data_type": "float32",
+                        "nodata": asset.nodata_value,
+                        "unit": "dB",
+                    }
+                    for polarization in polarizations
+                ]
+            },
+        ),
+    )
+    return item
+
+
 def _base_derived_item(
     *,
     scene: ProviderSceneRecord,
@@ -304,6 +384,15 @@ def _eos04_item_id(scene: ProviderSceneRecord) -> str:
     return f"eos04-sar-mrs-{acquisition}-{product_hash}"
 
 
+def _nisar_item_id(scene: ProviderSceneRecord) -> str:
+    logical = scene.logical_scene_key or scene.provider_product_id
+    acquisition = (
+        scene.acquisition_at.strftime("%Y%m%dT%H%M%S") if scene.acquisition_at else "unknown"
+    )
+    product_hash = sha256(logical.encode()).hexdigest()[:12]
+    return f"nisar-ssar-gcov-{acquisition}-{product_hash}"
+
+
 def _json_dumps(value: dict[str, Any]) -> str:
     from json import dumps
 
@@ -333,6 +422,8 @@ def collection_json(collection_id: str) -> dict[str, Any]:
             return _resourcesat_collection(profile)
     if collection_id == EOS04_PGSTAC_COLLECTION_ID:
         return _eos04_collection(collection_id)
+    if collection_id == NISAR_PGSTAC_COLLECTION_ID:
+        return _nisar_collection(collection_id)
     return _generic_collection(collection_id)
 
 
@@ -416,6 +507,36 @@ def _eos04_collection(collection_id: str) -> dict[str, Any]:
             "sar:instrument_mode": ["MRS"],
             "akasha:source_id": [EOS04_SOURCE_ID],
             "akasha:provider_collection": [EOS04_COLLECTION_ID],
+            "akasha:supported_indices": [],
+        },
+        "links": [],
+    }
+
+
+def _nisar_collection(collection_id: str) -> dict[str, Any]:
+    now = datetime.now(UTC).isoformat()
+    return {
+        "type": "Collection",
+        "stac_version": "1.0.0",
+        "stac_extensions": [SAR_EXTENSION, RASTER_EXTENSION, PROJECTION_EXTENSION],
+        "id": collection_id,
+        "title": "Akasha NISAR S-SAR Beta GCOV backscatter",
+        "description": (
+            "Validated NISAR S-band L2 GCOV Gamma0 backscatter COGs from ISRO/NRSC "
+            "Bhoonidhi. Radar evidence only; no optical vegetation indices."
+        ),
+        "license": "proprietary",
+        "extent": {
+            "spatial": {"bbox": [[-180, -90, 180, 90]]},
+            "temporal": {"interval": [[now, None]]},
+        },
+        "summaries": {
+            "platform": ["nisar"],
+            "instruments": ["ssar"],
+            "sar:frequency_band": ["S"],
+            "sar:instrument_mode": ["GCOV"],
+            "akasha:source_id": [NISAR_SOURCE_ID],
+            "akasha:provider_collection": [NISAR_COLLECTION_ID],
             "akasha:supported_indices": [],
         },
         "links": [],

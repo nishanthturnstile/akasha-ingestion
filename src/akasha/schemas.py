@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from akasha.config import Environment
 from akasha.jobs.store import Job
 from akasha.processing.eos04 import EOS04_COLLECTION_ID, EOS04_SOURCE_ID
+from akasha.processing.nisar import NISAR_COLLECTION_ID, NISAR_SOURCE_ID
 from akasha.processing.resourcesat import RESOURCESAT_SOURCE_COLLECTIONS, RESOURCESAT_SOURCE_IDS
 
 T = TypeVar("T")
@@ -71,6 +72,7 @@ class SyncRequest(BaseModel):
         "sentinel2_backfill",
         "resourcesat_backfill",
         "eos04_backfill",
+        "nisar_backfill",
     ] = "mock_sync"
     provider_route: str | None = Field(default=None, min_length=1)
     mode: Literal[
@@ -130,6 +132,22 @@ class SyncRequest(BaseModel):
             }:
                 raise ValueError(
                     "eos04_backfill mode must be metadata_only, download_only, prepare_only, "
+                    "or full_pipeline"
+                )
+        elif self.job_type == "nisar_backfill":
+            if self.source_id != NISAR_SOURCE_ID:
+                raise ValueError(f"nisar_backfill requires source_id {NISAR_SOURCE_ID}")
+            expected_route = f"bhoonidhi:{NISAR_COLLECTION_ID}"
+            if self.provider_route != expected_route:
+                raise ValueError(f"nisar_backfill requires provider_route {expected_route}")
+            if self.mode not in {
+                "metadata_only",
+                "download_only",
+                "prepare_only",
+                "full_pipeline",
+            }:
+                raise ValueError(
+                    "nisar_backfill mode must be metadata_only, download_only, prepare_only, "
                     "or full_pipeline"
                 )
         elif self.provider_route is not None:
@@ -284,7 +302,9 @@ class FieldSarRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     geometry: dict[str, Any]
-    sourceId: Literal["eos-04-sar-mrs-l2b"] = "eos-04-sar-mrs-l2b"
+    sourceId: Literal["eos-04-sar-mrs-l2b", "nisar-ssar-beta-gcov"] = (
+        "eos-04-sar-mrs-l2b"
+    )
     crs: Literal["EPSG:4326"] = "EPSG:4326"
     fieldId: str | None = Field(default=None, min_length=1)
     targetDate: date
@@ -306,6 +326,8 @@ class FieldSarRequest(BaseModel):
         coordinates = self.geometry.get("coordinates")
         if not isinstance(coordinates, list) or not coordinates:
             raise ValueError("geometry coordinates are required")
+        if self.sourceId == NISAR_SOURCE_ID and self.includeHistory:
+            raise ValueError("NISAR temporal history is not supported")
         return self
 
 
@@ -388,7 +410,7 @@ class FieldSarAvailableResponse(BaseModel):
     status: Literal["AVAILABLE"] = "AVAILABLE"
     queryId: str
     fieldId: str | None = None
-    sourceId: Literal["eos-04-sar-mrs-l2b"] = "eos-04-sar-mrs-l2b"
+    sourceId: Literal["eos-04-sar-mrs-l2b", "nisar-ssar-beta-gcov"]
     requestedDate: date
     acquisitionDate: date
     daysFromTarget: int
@@ -411,7 +433,7 @@ class FieldSarAvailableResponse(BaseModel):
 class FieldSarUnavailableResponse(BaseModel):
     status: Literal["UNAVAILABLE"] = "UNAVAILABLE"
     fieldId: str | None = None
-    sourceId: Literal["eos-04-sar-mrs-l2b"] = "eos-04-sar-mrs-l2b"
+    sourceId: Literal["eos-04-sar-mrs-l2b", "nisar-ssar-beta-gcov"]
     requestedDate: date
     reasonCode: Literal[
         "no_scene",

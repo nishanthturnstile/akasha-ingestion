@@ -149,8 +149,51 @@ def eos04_source_state(settings: Settings) -> SourceState:
     )
 
 
+def nisar_source_state(settings: Settings) -> SourceState:
+    aoi = SourceAoiState(
+        source_id=settings.nisar_preload_source_id,
+        aoi_id=settings.nisar_preload_aoi_id,
+        provider_route=settings.nisar_preload_provider_route,
+        date_window_days=settings.nisar_preload_date_window_days,
+        refresh_days=settings.nisar_preload_refresh_days,
+        freshness_max_age_hours=settings.nisar_preload_refresh_days * 24,
+        max_downloads=settings.nisar_max_downloads_per_run,
+        min_coverage_percent=0.0,
+        composite_window_days=0,
+    )
+    return SourceState(
+        source_id=settings.nisar_preload_source_id,
+        provider_route=settings.nisar_preload_provider_route,
+        lifecycle_state="manual",
+        schedule_state="manual",
+        capabilities=(
+            "search",
+            "download",
+            "prepare",
+            "validate",
+            "catalog",
+            "tiles",
+            "field_evidence",
+        ),
+        product_exposure="hidden",
+        commercial_state="restricted",
+        aoi_scope="configured_aois",
+        validation_state="pending",
+        readiness_reasons=("Real S-SAR Beta GCOV staging validation is required.",),
+        validation_profile=settings.nisar_profile_version,
+        cadence_class="revisit_12d",
+        host_pool="akasha-staging",
+        owner="akasha-ingestion",
+        default_aois=(aoi,),
+    )
+
+
 def ingestion_source_registry(settings: Settings) -> tuple[SourceState, ...]:
-    return (*resourcesat_source_registry(settings), eos04_source_state(settings))
+    return (
+        *resourcesat_source_registry(settings),
+        eos04_source_state(settings),
+        nisar_source_state(settings),
+    )
 
 
 def _state(
