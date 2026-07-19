@@ -15,6 +15,7 @@ from akasha.catalog.scene_repository import ProviderSceneRecord
 from akasha.catalog.tile_layer_repository import TileLayerRecord
 from akasha.config import Settings
 from akasha.processing.eos04 import EOS04_PROCESSING_PROFILE_VERSION, EOS04_SOURCE_ID
+from akasha.processing.nisar import NISAR_PROCESSING_PROFILE_VERSION, NISAR_SOURCE_ID
 from akasha.processing.raster_source import RasterSource, open_raster
 from akasha.processing.raster_stats import categorical_mask_stats, raster_stats, sar_field_stats
 from akasha.processing.resourcesat import (
@@ -343,12 +344,15 @@ class AnalyticsService:
         )
 
     def field_sar(self, request: FieldSarRequest) -> FieldSarResponse:
-        """Resolve calibrated EOS-04 evidence for one exact field geometry."""
+        """Resolve calibrated SAR evidence for one exact field geometry."""
 
         self._validate_geometry_limits(request)
         self._field_query_repository.delete_expired(limit=100)
-        if request.sourceId != EOS04_SOURCE_ID:
+        if request.sourceId not in {EOS04_SOURCE_ID, NISAR_SOURCE_ID}:
             raise ValueError(f"unsupported SAR source_id: {request.sourceId}")
+        if request.sourceId == NISAR_SOURCE_ID and request.includeHistory:
+            raise ValueError("NISAR temporal history is not supported")
+        source_label = "NISAR" if request.sourceId == NISAR_SOURCE_ID else "EOS-04"
         if not self._has_sar_dependencies():
             return self._sar_unavailable(
                 request,
@@ -372,7 +376,7 @@ class AnalyticsService:
             return self._sar_unavailable(
                 request,
                 "no_scene",
-                "No accepted EOS-04 scene is available within the support window.",
+                f"No accepted {source_label} scene is available within the support window.",
             )
 
         observed_overlap = False
@@ -414,18 +418,21 @@ class AnalyticsService:
                 return self._sar_unavailable(
                     request,
                     "processing_unavailable",
-                    "EOS-04 field backscatter is temporarily unavailable.",
+                    f"{source_label} field backscatter is temporarily unavailable.",
                 )
             if observed_low_coverage:
                 return self._sar_unavailable(
                     request,
                     "low_coverage",
-                    "EOS-04 overlaps the field but does not meet the coverage requirement.",
+                    (
+                        f"{source_label} overlaps the field but does not meet the "
+                        "coverage requirement."
+                    ),
                 )
             return self._sar_unavailable(
                 request,
                 "no_overlap" if not observed_overlap else "no_scene",
-                "No qualifying EOS-04 observation overlaps this exact field.",
+                f"No qualifying {source_label} observation overlaps this exact field.",
             )
 
         scene, asset, stats = min(
@@ -441,7 +448,11 @@ class AnalyticsService:
         polarizations = [
             str(value).upper() for value in asset.metadata.get("polarizations", []) if value
         ]
-        displayed = polarizations[0]
+        displayed = (
+            "HH"
+            if request.sourceId == NISAR_SOURCE_ID and "HH" in polarizations
+            else polarizations[0]
+        )
         confidence = _sar_confidence(days_from_target, float(stats["coveragePercent"]))
         query_id = new_query_id()
         overlay_template = f"/api/v1/analytics/field-sar/{query_id}/overlay.png"
@@ -452,19 +463,34 @@ class AnalyticsService:
             path_template=overlay_template,
             geometry_or_query_hash=self._signing.query_hash(f"{query_id}:sar_overlay"),
         )
+        identification = dict(asset.metadata.get("identification") or {})
+        is_nisar = request.sourceId == NISAR_SOURCE_ID
         provenance = {
-            "platform": "EOS-04",
+            "platform": "NISAR" if is_nisar else "EOS-04",
             "provider": "ISRO/NRSC Bhoonidhi",
-            "productLevel": "L2B",
+            "productLevel": "L2-GCOV" if is_nisar else "L2B",
             "processingFamily": "sar_backscatter",
             "processingProfileVersion": asset.metadata.get(
-                "processing_profile_version", EOS04_PROCESSING_PROFILE_VERSION
+                "processing_profile_version",
+                NISAR_PROCESSING_PROFILE_VERSION if is_nisar else EOS04_PROCESSING_PROFILE_VERSION,
             ),
             "unit": "dB",
             "pixelSpacingMeters": scene.native_resolution,
             "polarizationOrder": polarizations,
             "rtcApplied": True,
+            "frequencyBand": "S" if is_nisar else "C",
         }
+        if is_nisar:
+            provenance.update(
+                {
+                    "productSpecificationVersion": identification.get(
+                        "product_specification_version"
+                    ),
+                    "trackNumber": identification.get("track_number"),
+                    "frameNumber": identification.get("frame_number"),
+                    "orbitPassDirection": identification.get("orbit_pass_direction"),
+                }
+            )
         temporal = (
             self._field_sar_temporal(request=request, current_scene=scene, current_stats=stats)
             if request.includeHistory
@@ -478,7 +504,9 @@ class AnalyticsService:
                 requested_date=request.targetDate,
                 selected_scene_id=scene.id,
                 valid_pixel_count=int(stats["validPixelCount"]),
-                selection_reason="nearest_qualified_eos04_field_observation",
+                selection_reason=(
+                    f"nearest_qualified_{'nisar' if is_nisar else 'eos04'}_field_observation"
+                ),
                 stats_json={
                     **stats,
                     "acquisitionDate": acquisition_date.isoformat(),
@@ -497,12 +525,13 @@ class AnalyticsService:
                 geometry_hash=self._signing.query_hash(
                     dumps(request.geometry, sort_keys=True, separators=(",", ":"))
                 ),
-                analysis_version="sar-field-evidence-v1",
+            analysis_version="sar-field-evidence-v1",
             )
         )
         return FieldSarAvailableResponse(
             queryId=query_id,
             fieldId=request.fieldId,
+            sourceId=request.sourceId,
             requestedDate=request.targetDate,
             acquisitionDate=acquisition_date,
             daysFromTarget=days_from_target,
@@ -711,6 +740,7 @@ class AnalyticsService:
     ) -> FieldSarUnavailableResponse:
         return FieldSarUnavailableResponse(
             fieldId=request.fieldId,
+            sourceId=request.sourceId,
             requestedDate=request.targetDate,
             reasonCode=reason_code,
             reason=reason,

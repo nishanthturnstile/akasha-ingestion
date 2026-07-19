@@ -13,6 +13,7 @@ from akasha.catalog.asset_repository import SceneAssetRecord
 from akasha.catalog.scene_repository import ProviderSceneRecord
 from akasha.config import Environment, RuntimeBackend, Settings
 from akasha.processing.eos04 import EOS04_SOURCE_ID
+from akasha.processing.nisar import NISAR_SOURCE_ID
 from akasha.processing.overlay import render_clipped_sar_overlay
 from akasha.processing.raster_stats import sar_field_stats
 from akasha.security import hash_api_key
@@ -110,6 +111,49 @@ def _client(*, cog: bytes | None = None) -> TestClient:
         )
     )
     return TestClient(app)
+
+
+def _nisar_client(*, cog: bytes) -> TestClient:
+    client = _client()
+    scene = client.app.state.scene_repository.upsert(
+        ProviderSceneRecord(
+            id=None,
+            provider_adapter="bhoonidhi",
+            source_id=NISAR_SOURCE_ID,
+            provider_product_id="NISAR-SSAR-GCOV-20260717",
+            acquisition_at=datetime(2026, 7, 17, 0, 40, 49, tzinfo=UTC),
+            status="accepted",
+            pgstac_item_id="nisar-ssar-gcov-20260717",
+            aoi_id="bangalore",
+            native_crs="EPSG:4326",
+            native_resolution=20.0,
+            provider_metadata={},
+        )
+    )
+    assert scene.id is not None
+    object_path = "nisar/2026-07-17/backscatter.tif"
+    client.app.state.object_store.put_bytes(object_path, cog)
+    client.app.state.asset_repository.upsert(
+        SceneAssetRecord(
+            id=None,
+            scene_id=scene.id,
+            asset_kind="sar_backscatter",
+            asset_key="backscatter",
+            object_path=object_path,
+            nodata_value=-9999.0,
+            metadata={
+                "polarizations": ["HH", "HV"],
+                "processing_profile_version": "nisar-ssar-beta-gcov-gamma0-v1",
+                "identification": {
+                    "product_specification_version": "1.2.1",
+                    "track_number": 12,
+                    "frame_number": 34,
+                    "orbit_pass_direction": "DESCENDING",
+                },
+            },
+        )
+    )
+    return client
 
 
 def _comparison_metadata() -> dict:
@@ -241,6 +285,72 @@ def test_field_sar_api_returns_evidence_and_signed_overlay() -> None:
     assert overlay_response.status_code == 200
     assert overlay_response.headers["content-type"] == "image/png"
     assert "X-Akasha-Overlay-Corners" in overlay_response.headers
+
+
+def test_nisar_field_sar_returns_single_date_s_band_provenance() -> None:
+    client = _nisar_client(cog=_sar_cog())
+    payload = {**_payload(), "sourceId": NISAR_SOURCE_ID, "includeHistory": False}
+
+    response = client.post(
+        "/api/v1/analytics/field-sar",
+        headers={"X-API-Key": API_KEY},
+        json=payload,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "AVAILABLE"
+    assert data["sourceId"] == NISAR_SOURCE_ID
+    assert data["displayedPolarization"] == "HH"
+    assert data["features"]["HH_MINUS_HV_DB"] == 10.0
+    assert data["provenance"] == {
+        "platform": "NISAR",
+        "provider": "ISRO/NRSC Bhoonidhi",
+        "productLevel": "L2-GCOV",
+        "processingFamily": "sar_backscatter",
+        "processingProfileVersion": "nisar-ssar-beta-gcov-gamma0-v1",
+        "unit": "dB",
+        "pixelSpacingMeters": 20.0,
+        "polarizationOrder": ["HH", "HV"],
+        "rtcApplied": True,
+        "frequencyBand": "S",
+        "productSpecificationVersion": "1.2.1",
+        "trackNumber": 12,
+        "frameNumber": 34,
+        "orbitPassDirection": "DESCENDING",
+    }
+    assert data["history"] == []
+
+
+def test_nisar_field_sar_rejects_history() -> None:
+    payload = {**_payload(), "sourceId": NISAR_SOURCE_ID, "includeHistory": True}
+
+    response = _client().post(
+        "/api/v1/analytics/field-sar",
+        headers={"X-API-Key": API_KEY},
+        json=payload,
+    )
+
+    assert response.status_code == 422
+
+
+def test_nisar_rejects_optical_field_index_requests() -> None:
+    response = _client().post(
+        "/api/v1/analytics/field-index",
+        headers={"X-API-Key": API_KEY},
+        json={
+            "geometry": FIELD,
+            "sourceId": NISAR_SOURCE_ID,
+            "crs": "EPSG:4326",
+            "index": "NDVI",
+            "date": "2026-07-18",
+            "fallbackPolicy": "nearest_valid_scene",
+            "maxCloudPercentage": 20,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "unsupported source" in response.json()["error"]["message"]
 
 
 def test_field_sar_api_returns_comparable_history_delta_and_baseline() -> None:

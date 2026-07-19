@@ -15,6 +15,12 @@ from akasha.processing.eos04 import (
     EOS04_PROCESSING_PROFILE_VERSION,
     EOS04_SOURCE_ID,
 )
+from akasha.processing.nisar import (
+    NISAR_COLLECTION_ID,
+    NISAR_PGSTAC_COLLECTION_ID,
+    NISAR_PROCESSING_PROFILE_VERSION,
+    NISAR_SOURCE_ID,
+)
 from akasha.processing.resourcesat import (
     BHOONIDHI_AWIFS_BOA_COLLECTION_ID,
     BHOONIDHI_LISS3_BOA_COLLECTION_ID,
@@ -210,6 +216,42 @@ SOURCE_METADATA: dict[str, dict[str, Any]] = {
             "requires_approved_runtime": True,
         },
     },
+    NISAR_SOURCE_ID: {
+        "status": "manual_only",
+        "execution_policy_ref": "bhoonidhi-default",
+        "validation_profile": {
+            "version": NISAR_PROCESSING_PROFILE_VERSION,
+            "checks": [
+                "ssar_l2_gcov_identification",
+                "gamma0_normalization",
+                "rtc_applied_validation",
+                "native_gcov_mask_validation",
+                "explicit_sar_polarizations",
+                "float32_db_backscatter_cog",
+                "sar_pgstac_metadata",
+            ],
+        },
+        "processing_profile": {
+            "version": NISAR_PROCESSING_PROFILE_VERSION,
+            "source": "bhoonidhi",
+            "level": "L2-GCOV",
+            "family": "sar_backscatter",
+            "input_representation": "float32_gamma0_power",
+            "calibration_formula": "10*log10(gamma0_power)",
+            "output_unit": "dB",
+        },
+        "license_profile": {
+            "profile": "nrsc-bhoonidhi-restricted",
+            "serving": "internal_private",
+        },
+        "provider_metadata": {
+            "primary_route": f"bhoonidhi:{NISAR_COLLECTION_ID}",
+            "provider_collection": NISAR_COLLECTION_ID,
+            "pgstac_collection": NISAR_PGSTAC_COLLECTION_ID,
+            "requires_approved_runtime": True,
+            "product_exposure": "hidden",
+        },
+    },
 } | {
     source_id: _resourcesat_source_metadata(source_id, profile)
     for source_id, profile in RESOURCESAT_SOURCE_PROFILES.items()
@@ -351,6 +393,23 @@ PROVIDER_ROUTES: tuple[dict[str, Any], ...] = (
         "license_profile": "nrsc-bhoonidhi-restricted",
         "metadata": {
             "route_key": f"bhoonidhi:{EOS04_COLLECTION_ID}",
+            "requires_approved_runtime": True,
+            "processing_family": "sar_backscatter",
+            "product_exposure": "hidden",
+        },
+    },
+    {
+        "source_id": NISAR_SOURCE_ID,
+        "provider_adapter": "bhoonidhi",
+        "provider_collection": NISAR_COLLECTION_ID,
+        "provider_priority": 1,
+        "provider_role": "primary",
+        "status": "manual_only",
+        "access_mode": "authenticated_download",
+        "execution_policy_ref": "bhoonidhi-default",
+        "license_profile": "nrsc-bhoonidhi-restricted",
+        "metadata": {
+            "route_key": f"bhoonidhi:{NISAR_COLLECTION_ID}",
             "requires_approved_runtime": True,
             "processing_family": "sar_backscatter",
             "product_exposure": "hidden",

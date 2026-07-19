@@ -25,6 +25,7 @@ from akasha.runtime import (
     create_eos04_ingestion_service,
     create_field_query_repository,
     create_job_store,
+    create_nisar_ingestion_service,
     create_object_store,
     create_pgstac_repository,
     create_profile_repository,
@@ -67,6 +68,7 @@ from akasha.services.natural_imagery import (
     NaturalImageryService,
     NaturalImageryUnavailable,
 )
+from akasha.services.nisar_ingestion import NisarIngestionService
 from akasha.services.readiness import ReadinessService
 from akasha.services.resourcesat_ingestion import ResourceSatIngestionService
 from akasha.services.sentinel2_ingestion import Sentinel2IngestionService
@@ -177,6 +179,18 @@ def create_app(
         object_store=objects,
         pgstac_repository=pgstac_repository,
     )
+    nisar_service = create_nisar_ingestion_service(
+        app_settings,
+        engine,
+        job_store=store,
+        stage_store=stage_store,
+        aoi_repository=aoi_repository,
+        source_provider_route_repository=source_provider_routes,
+        scene_repository=scene_repository,
+        asset_repository=asset_repository,
+        object_store=objects,
+        pgstac_repository=pgstac_repository,
+    )
     analytics_service = AnalyticsService(
         field_query_repository=field_query_repository,
         scene_repository=scene_repository,
@@ -234,6 +248,7 @@ def create_app(
     app.state.sentinel2_ingestion_service = sentinel2_service
     app.state.resourcesat_ingestion_service = resourcesat_service
     app.state.eos04_ingestion_service = eos04_service
+    app.state.nisar_ingestion_service = nisar_service
     app.state.analytics_service = analytics_service
     app.state.readiness_service = readiness_service
     app.state.natural_imagery_service = natural_imagery_service
@@ -382,6 +397,11 @@ def create_app(
                 request.app.state.eos04_ingestion_service
             )
             job = eos04_service_obj.start_backfill(payload)
+        elif payload.job_type == "nisar_backfill":
+            nisar_service_obj: NisarIngestionService = (
+                request.app.state.nisar_ingestion_service
+            )
+            job = nisar_service_obj.start_backfill(payload)
         else:
             service_obj: MockIngestionService = request.app.state.ingestion_service
             job = service_obj.start_mock_sync(payload)

@@ -266,6 +266,32 @@ def compute_eos04_backfill_idempotency_key(
     )
 
 
+def compute_nisar_backfill_idempotency_key(
+    *,
+    source_id: str,
+    provider_route: str,
+    aoi_id: str,
+    date_start: str,
+    date_end: str,
+    mode: str,
+    request_params_version: str,
+    processing_profile_version: str,
+) -> str:
+    return _hash_material(
+        {
+            "job_type": "nisar_backfill",
+            "source_id": source_id,
+            "provider_route": provider_route,
+            "aoi_id": aoi_id,
+            "date_start": date_start,
+            "date_end": date_end,
+            "mode": mode,
+            "request_params_version": request_params_version,
+            "processing_profile_version": processing_profile_version,
+        }
+    )
+
+
 def _hash_material(material: dict[str, str]) -> str:
     return sha256(
         dumps(material, sort_keys=True, separators=(",", ":")).encode(),
