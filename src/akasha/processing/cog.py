@@ -117,12 +117,15 @@ def translate_cog_file(
     output_path: str | Path,
     *,
     overview_resampling: str = "bilinear",
+    bigtiff: bool = False,
 ) -> Path:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix="akasha-cog-", dir=output_path.parent) as tmp_dir:
         temp_output_path = Path(tmp_dir) / "output.cog.tif"
-        profile = cog_profiles.get("deflate")
+        profile = dict(cog_profiles.get("deflate"))
+        if bigtiff:
+            profile["BIGTIFF"] = "YES"
         cog_translate(
             source_path,
             temp_output_path,
