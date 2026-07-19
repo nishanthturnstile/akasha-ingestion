@@ -13,6 +13,7 @@ def create_celery_app() -> Celery:
     celery_app.conf.imports = (
         "akasha.jobs.tasks",
         "akasha.jobs.sentinel2_tasks",
+        "akasha.jobs.landsat_tasks",
         "akasha.jobs.resourcesat_tasks",
         "akasha.jobs.eos04_tasks",
         "akasha.jobs.nisar_tasks",
@@ -21,6 +22,8 @@ def create_celery_app() -> Celery:
         "akasha.jobs.tasks.mock_sync": {"queue": "download"},
         "akasha.jobs.sentinel2_tasks.scheduled_bangalore_preload": {"queue": "maintenance"},
         "akasha.jobs.sentinel2_tasks.backfill": {"queue": "heavy-cpu"},
+        "akasha.jobs.landsat_tasks.backfill": {"queue": "heavy-cpu"},
+        "akasha.jobs.landsat_tasks.scheduled_preload": {"queue": "maintenance"},
         "akasha.jobs.resourcesat_tasks.scheduled_liss3_preload": {"queue": "maintenance"},
         "akasha.jobs.resourcesat_tasks.scheduled_resourcesat_sources": {"queue": "maintenance"},
         "akasha.jobs.resourcesat_tasks.backfill": {"queue": "heavy-cpu"},
@@ -42,6 +45,14 @@ def create_celery_app() -> Celery:
             "schedule": crontab(
                 minute=settings.sentinel2_preload_schedule_minute_utc,
                 hour=settings.sentinel2_preload_schedule_hour_utc,
+            ),
+        }
+    if settings.landsat_preload_schedule_enabled:
+        beat_schedule["landsat-preload"] = {
+            "task": "akasha.jobs.landsat_tasks.scheduled_preload",
+            "schedule": crontab(
+                minute=settings.landsat_preload_schedule_minute_utc,
+                hour=settings.landsat_preload_schedule_hour_utc,
             ),
         }
     if (
@@ -80,6 +91,7 @@ def create_celery_app() -> Celery:
 celery_app = create_celery_app()
 
 import akasha.jobs.eos04_tasks  # noqa: E402,F401
+import akasha.jobs.landsat_tasks  # noqa: E402,F401
 import akasha.jobs.nisar_tasks  # noqa: E402,F401
 import akasha.jobs.resourcesat_tasks  # noqa: E402,F401
 import akasha.jobs.sentinel2_tasks  # noqa: E402,F401

@@ -66,12 +66,12 @@ SEED_SOURCES: tuple[SourceResponse, ...] = (
     SourceResponse(
         source_id="landsat-c2-l2",
         catalog_slug="landsat-c2",
-        provider_adapter="earthsearch",
+        provider_adapter="planetary-computer",
         instrument_mode="OLI/TIRS",
         analysis_level="C2L2",
-        schedule_state="disabled",
+        schedule_state="manual",
         product_exposure="hidden",
-        supported_indices=["ndvi", "ndmi", "ndbi", "nbr"],
+        supported_indices=["ndvi", "msavi", "ndmi", "ndwi_green_nir"],
     ),
     SourceResponse(
         source_id="sentinel-1-grd",

@@ -18,7 +18,18 @@ def write_cog_bytes(
     crs: str,
     nodata: int | float,
     tags: dict[str, str] | None = None,
+    band_descriptions: tuple[str, ...] | None = None,
+    overview_resampling: str = "nearest",
 ) -> bytes:
+    source_values = values[np.newaxis, :, :] if values.ndim == 2 else values
+    if source_values.ndim != 3:
+        raise ValueError("COG values must be a 2D or 3D array")
+    count, height, width = source_values.shape
+    descriptions = band_descriptions or tuple(
+        f"band-{index}" for index in range(1, count + 1)
+    )
+    if len(descriptions) != count:
+        raise ValueError("band description count must match COG band count")
     with TemporaryDirectory(prefix="akasha-cog-") as tmp_dir:
         source_path = Path(tmp_dir) / "source.tif"
         cog_path = Path(tmp_dir) / "output.cog.tif"
@@ -26,15 +37,17 @@ def write_cog_bytes(
             source_path,
             "w",
             driver="GTiff",
-            width=values.shape[1],
-            height=values.shape[0],
-            count=1,
-            dtype=str(values.dtype),
+            width=width,
+            height=height,
+            count=count,
+            dtype=str(source_values.dtype),
             crs=crs,
             transform=transform,
             nodata=nodata,
         ) as dataset:
-            dataset.write(values, 1)
+            dataset.write(source_values)
+            for band_index, description in enumerate(descriptions, start=1):
+                dataset.set_band_description(band_index, description)
             if tags:
                 dataset.update_tags(**tags)
 
@@ -45,6 +58,9 @@ def write_cog_bytes(
             profile,
             in_memory=False,
             quiet=True,
+            overview_resampling=overview_resampling,
+            forward_band_tags=True,
+            forward_ns_tags=True,
         )
         is_valid, errors, warnings = cog_validate(cog_path, quiet=True)
         if not is_valid:

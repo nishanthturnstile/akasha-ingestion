@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from akasha.config import Environment
 from akasha.jobs.store import Job
 from akasha.processing.eos04 import EOS04_COLLECTION_ID, EOS04_SOURCE_ID
+from akasha.processing.landsat import LANDSAT_PRIMARY_PROVIDER_ROUTE, LANDSAT_SOURCE_ID
 from akasha.processing.nisar import NISAR_COLLECTION_ID, NISAR_SOURCE_ID
 from akasha.processing.resourcesat import RESOURCESAT_SOURCE_COLLECTIONS, RESOURCESAT_SOURCE_IDS
 
@@ -70,6 +71,7 @@ class SyncRequest(BaseModel):
     job_type: Literal[
         "mock_sync",
         "sentinel2_backfill",
+        "landsat_backfill",
         "resourcesat_backfill",
         "eos04_backfill",
         "nisar_backfill",
@@ -98,6 +100,24 @@ class SyncRequest(BaseModel):
             if self.mode not in {"metadata_only", "mirror_only", "full_pipeline"}:
                 raise ValueError(
                     "sentinel2_backfill mode must be metadata_only, mirror_only, or full_pipeline"
+                )
+        elif self.job_type == "landsat_backfill":
+            if self.source_id != LANDSAT_SOURCE_ID:
+                raise ValueError(f"landsat_backfill requires source_id {LANDSAT_SOURCE_ID}")
+            if self.provider_route != LANDSAT_PRIMARY_PROVIDER_ROUTE:
+                raise ValueError(
+                    "landsat_backfill requires provider_route "
+                    f"{LANDSAT_PRIMARY_PROVIDER_ROUTE}"
+                )
+            if self.mode not in {
+                "metadata_only",
+                "mirror_only",
+                "prepare_only",
+                "full_pipeline",
+            }:
+                raise ValueError(
+                    "landsat_backfill mode must be metadata_only, mirror_only, prepare_only, "
+                    "or full_pipeline"
                 )
         elif self.job_type == "resourcesat_backfill":
             if self.source_id not in RESOURCESAT_SOURCE_IDS:

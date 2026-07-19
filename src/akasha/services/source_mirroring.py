@@ -45,6 +45,7 @@ class SourceMirroringService:
         item: NormalizedStacItem,
         asset: NormalizedAsset,
         payload: bytes | None = None,
+        download_href: str | None = None,
     ) -> MirrorResult:
         if payload is not None:
             object_path, checksum = self._object_store.put_source_cog(
@@ -63,7 +64,11 @@ class SourceMirroringService:
                 dir=str(self._settings.scratch_dir),
             ) as tmp_dir:
                 file_path = Path(tmp_dir) / f"{asset.asset_key}.tif"
-                checksum, size_bytes = self._download_asset(asset, file_path)
+                checksum, size_bytes = self._download_asset(
+                    asset,
+                    file_path,
+                    download_href=download_href,
+                )
                 object_path, checksum = self._object_store.put_source_cog_file(
                     provider=item.provider_adapter,
                     source_id=item.source_id,
@@ -94,11 +99,17 @@ class SourceMirroringService:
             metadata_checksum_sha256=metadata_checksum,
         )
 
-    def _download_asset(self, asset: NormalizedAsset, file_path: Path) -> tuple[str, int]:
+    def _download_asset(
+        self,
+        asset: NormalizedAsset,
+        file_path: Path,
+        *,
+        download_href: str | None = None,
+    ) -> tuple[str, int]:
         max_bytes = self._settings.source_mirror_max_bytes_per_run
         digest = sha256()
         size_bytes = 0
-        with self._client.stream("GET", asset.href) as response:
+        with self._client.stream("GET", download_href or asset.href) as response:
             response.raise_for_status()
             with file_path.open("wb") as file:
                 for chunk in response.iter_bytes(chunk_size=1024 * 1024):

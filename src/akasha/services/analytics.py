@@ -15,6 +15,16 @@ from akasha.catalog.scene_repository import ProviderSceneRecord
 from akasha.catalog.tile_layer_repository import TileLayerRecord
 from akasha.config import Settings
 from akasha.processing.eos04 import EOS04_PROCESSING_PROFILE_VERSION, EOS04_SOURCE_ID
+from akasha.processing.landsat import (
+    LANDSAT_INDEX_ASSETS,
+    LANDSAT_MASK_PROFILE_VERSION,
+    LANDSAT_NATIVE_RESOLUTION_METERS,
+    LANDSAT_PRIMARY_PROVIDER_ROUTE,
+    LANDSAT_SOURCE_ID,
+)
+from akasha.processing.landsat import (
+    output_profile as landsat_output_profile,
+)
 from akasha.processing.nisar import NISAR_PROCESSING_PROFILE_VERSION, NISAR_SOURCE_ID
 from akasha.processing.raster_source import RasterSource, open_raster
 from akasha.processing.raster_stats import categorical_mask_stats, raster_stats, sar_field_stats
@@ -864,7 +874,11 @@ class AnalyticsService:
             return self._object_store.raster_source(metadata_path)
         if self._asset_repository is None or not scene.id:
             return None
-        preferred_key = "mask" if scene.source_id in RESOURCESAT_PROFILES else "scl"
+        preferred_key = (
+            "mask"
+            if scene.source_id in RESOURCESAT_PROFILES or scene.source_id == LANDSAT_SOURCE_ID
+            else "scl"
+        )
         for asset in self._asset_repository.list_for_scene(scene.id):
             if asset.asset_key != preferred_key:
                 continue
@@ -879,6 +893,10 @@ class AnalyticsService:
                 raise ValueError(
                     f"unsupported index for {source_id}: {index_name}"
                 )
+            return
+        if source_id == LANDSAT_SOURCE_ID:
+            if index_name not in LANDSAT_INDEX_ASSETS:
+                raise ValueError(f"unsupported index for {source_id}: {index_name}")
             return
         profile = RESOURCESAT_PROFILES.get(source_id)
         if profile is None:
@@ -1058,6 +1076,8 @@ def _sar_confidence(days_from_target: int, coverage_percent: float) -> str:
 
 
 def _field_index_window_days(source_id: str, settings: Settings) -> int:
+    if source_id == LANDSAT_SOURCE_ID:
+        return settings.landsat_preload_date_window_days
     if source_id == settings.resourcesat_liss3_preload_source_id:
         return settings.resourcesat_liss3_preload_date_window_days
     if source_id == settings.resourcesat_liss4_preload_source_id:
@@ -1106,6 +1126,13 @@ def _date_distance_days(scene: ProviderSceneRecord, requested_date: object) -> i
 
 
 def _mask_class_policy(source_id: str) -> dict[str, tuple[int, ...]]:
+    if source_id == LANDSAT_SOURCE_ID:
+        return {
+            "nodata_classes": (0,),
+            "usable_classes": (1, 4),
+            "cloud_classes": (2, 5),
+            "shadow_classes": (3,),
+        }
     if source_id in RESOURCESAT_PROFILES:
         return {
             "nodata_classes": (0,),
@@ -1125,6 +1152,8 @@ def _provider_route_for_scene(scene: ProviderSceneRecord) -> str:
     provider_route = scene.provider_metadata.get("provider_route")
     if isinstance(provider_route, str) and provider_route:
         return provider_route
+    if scene.source_id == LANDSAT_SOURCE_ID:
+        return LANDSAT_PRIMARY_PROVIDER_ROUTE
     profile = RESOURCESAT_PROFILES.get(scene.source_id)
     if profile is not None:
         return f"bhoonidhi:{profile.collection_id}"
@@ -1132,6 +1161,8 @@ def _provider_route_for_scene(scene: ProviderSceneRecord) -> str:
 
 
 def _quality_warnings(source_id: str) -> list[str]:
+    if source_id == LANDSAT_SOURCE_ID:
+        return ["Landsat surface-reflectance analytics use 30 m pixels."]
     profile = RESOURCESAT_PROFILES.get(source_id)
     if profile is None:
         return []
@@ -1142,6 +1173,8 @@ def _quality_warnings(source_id: str) -> list[str]:
 
 
 def _atmospheric_correction_version(source_id: str) -> str:
+    if source_id == LANDSAT_SOURCE_ID:
+        return "usgs-landsat-collection-2-level-2-surface-reflectance"
     profile = RESOURCESAT_PROFILES.get(source_id)
     if profile is None:
         return "vendor-l2a"
@@ -1149,10 +1182,14 @@ def _atmospheric_correction_version(source_id: str) -> str:
 
 
 def _default_cloud_mask(source_id: str) -> str:
+    if source_id == LANDSAT_SOURCE_ID:
+        return LANDSAT_MASK_PROFILE_VERSION
     return RESOURCESAT_MASK_METHOD if source_id in RESOURCESAT_PROFILES else "scl-v1"
 
 
 def _default_formula_version(source_id: str, index_name: str) -> str:
+    if source_id == LANDSAT_SOURCE_ID:
+        return landsat_output_profile(index_name).formula_version
     if source_id in RESOURCESAT_PROFILES:
         return RESOURCESAT_FORMULA_VERSION.get(index_name, "")
     return SENTINEL2_FORMULA_VERSION.get(index_name, "")
@@ -1168,6 +1205,8 @@ def _native_resolution(
 
 
 def _profile_native_resolution(source_id: str) -> float:
+    if source_id == LANDSAT_SOURCE_ID:
+        return float(LANDSAT_NATIVE_RESOLUTION_METERS)
     profile = RESOURCESAT_PROFILES.get(source_id)
     return profile.native_resolution_m if profile is not None else 10.0
 
