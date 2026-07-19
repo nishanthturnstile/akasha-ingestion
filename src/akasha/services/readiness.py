@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from akasha.config import Settings
 from akasha.jobs.store import Job, JobStatus
+from akasha.processing.landsat import LANDSAT_INDEX_ASSETS
 from akasha.processing.resourcesat import (
     RESOURCESAT_PROFILES,
     has_exact_date_composite_provenance,
@@ -57,6 +58,19 @@ RESOURCESAT_REASON_MESSAGES = {
     ),
     "LOW_COVERAGE": "ResourceSat outputs do not satisfy the configured coverage threshold.",
     "SOURCE_NOT_ENABLED": "Requested ResourceSat source is not enabled for analytics readiness.",
+}
+
+LANDSAT_REASON_MESSAGES = {
+    "SOURCE_MISMATCH": "Requested source is not configured for Landsat readiness.",
+    "AOI_MISMATCH": "Requested AOI is not configured for Landsat readiness.",
+    "NO_SUCCESSFUL_PRELOAD_JOB": (
+        "No successful Landsat full-pipeline job is registered for this AOI."
+    ),
+    "NO_PRELOAD_OUTPUTS": "No Landsat derived outputs are registered for this AOI.",
+    "MISSING_INDEX_COVERAGE": "Landsat outputs exist, but required index coverage is missing.",
+    "PRELOAD_STALE": "Latest successful Landsat output is older than the freshness threshold.",
+    "SOURCE_NOT_ENABLED": "Landsat analytics readiness is not enabled.",
+    "LOW_COVERAGE": "Landsat outputs do not satisfy the configured coverage threshold.",
 }
 
 
@@ -281,6 +295,7 @@ class ReadinessService:
 
     def _policies(self) -> dict[str, ReadinessPolicy]:
         policies = {self._settings.sentinel2_preload_source_id: self._sentinel_policy()}
+        policies[self._settings.landsat_preload_source_id] = self._landsat_policy()
         policies.update(self._resourcesat_policies())
         return policies
 
@@ -293,6 +308,27 @@ class ReadinessService:
             required_indices=("ndvi",),
             freshness_max_age_hours=self._settings.sentinel2_preload_freshness_max_age_hours,
             reason_messages=SENTINEL_REASON_MESSAGES,
+        )
+
+    def _landsat_policy(self) -> ReadinessPolicy:
+        required_indices = tuple(
+            index.lower() for index in self._settings.landsat_readiness_required_indices
+        )
+        unsupported = sorted(set(required_indices) - set(LANDSAT_INDEX_ASSETS))
+        if unsupported:
+            raise ValueError(f"unsupported Landsat readiness indices: {', '.join(unsupported)}")
+        if not required_indices:
+            raise ValueError("Landsat readiness requires at least one index")
+        return ReadinessPolicy(
+            source_id=self._settings.landsat_preload_source_id,
+            aoi_id=self._settings.landsat_preload_aoi_id,
+            provider_route=self._settings.landsat_preload_provider_route,
+            job_type="landsat_backfill",
+            required_indices=required_indices,
+            freshness_max_age_hours=self._settings.landsat_preload_freshness_max_age_hours,
+            reason_messages=LANDSAT_REASON_MESSAGES,
+            enabled=self._settings.landsat_readiness_enabled,
+            require_successful_job=True,
         )
 
     def _resourcesat_policies(self) -> dict[str, ReadinessPolicy]:

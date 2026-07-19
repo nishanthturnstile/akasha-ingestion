@@ -17,6 +17,7 @@ SourceProductExposure = Literal["hidden", "admin", "public"]
 SourceValidationState = Literal["pending", "accepted"]
 SourceCadenceClass = Literal[
     "revisit_5d",
+    "revisit_8d",
     "revisit_12d",
     "revisit_24d",
     "regional_context",
@@ -188,11 +189,61 @@ def nisar_source_state(settings: Settings) -> SourceState:
     )
 
 
+def landsat_source_state(settings: Settings) -> SourceState:
+    aoi = SourceAoiState(
+        source_id=settings.landsat_preload_source_id,
+        aoi_id=settings.landsat_preload_aoi_id,
+        provider_route=settings.landsat_preload_provider_route,
+        date_window_days=settings.landsat_preload_date_window_days,
+        refresh_days=settings.landsat_preload_refresh_days,
+        freshness_max_age_hours=settings.landsat_preload_freshness_max_age_hours,
+        max_downloads=settings.landsat_max_new_scenes_per_run,
+        min_coverage_percent=settings.field_min_coverage_percentage,
+        composite_window_days=0,
+    )
+    schedule_state: SourceScheduleState = (
+        "scheduled" if settings.landsat_preload_schedule_enabled else "manual"
+    )
+    lifecycle_state: SourceLifecycleState = (
+        "scheduled" if settings.landsat_preload_schedule_enabled else "manual"
+    )
+    return SourceState(
+        source_id=settings.landsat_preload_source_id,
+        provider_route=settings.landsat_preload_provider_route,
+        lifecycle_state=lifecycle_state,
+        schedule_state=schedule_state,
+        capabilities=(
+            "search",
+            "download",
+            "prepare",
+            "validate",
+            "catalog",
+            "indices",
+            "readiness",
+        ),
+        product_exposure="public" if settings.landsat_readiness_enabled else "hidden",
+        commercial_state="restricted",
+        aoi_scope="configured_aois",
+        validation_state="pending",
+        readiness_reasons=(
+            ()
+            if settings.landsat_readiness_enabled
+            else ("Real Landsat Collection 2 staging validation is required.",)
+        ),
+        validation_profile=settings.landsat_profile_version,
+        cadence_class="revisit_8d",
+        host_pool="akasha-staging",
+        owner="akasha-ingestion",
+        default_aois=(aoi,),
+    )
+
+
 def ingestion_source_registry(settings: Settings) -> tuple[SourceState, ...]:
     return (
         *resourcesat_source_registry(settings),
         eos04_source_state(settings),
         nisar_source_state(settings),
+        landsat_source_state(settings),
     )
 
 

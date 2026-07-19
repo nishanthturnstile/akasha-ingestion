@@ -6,7 +6,12 @@ import pytest
 
 from akasha.catalog.profile_repository import InMemoryProfileRepository, build_memory_profiles
 from akasha.catalog.repository import StaticSourceCatalog
-from akasha.catalog.seed_db import PROVIDER_ROUTES, THRESHOLD_PROFILES, VISUALIZATION_PROFILES
+from akasha.catalog.seed_db import (
+    PROVIDER_ROUTES,
+    THRESHOLD_PROFILES,
+    VISUALIZATION_PROFILES,
+    build_execution_policies,
+)
 from akasha.catalog.source_route_repository import (
     InMemorySourceProviderRouteRepository,
     build_memory_routes,
@@ -22,6 +27,8 @@ def test_phase2_settings_defaults_are_safe() -> None:
 
     assert settings.earthsearch_api_url == "https://earth-search.aws.element84.com/v1"
     assert settings.earthsearch_page_size == 100
+    assert settings.planetary_computer_api_url.endswith("/api/stac/v1")
+    assert settings.planetary_computer_page_size == 100
     assert settings.source_mirror_mode == SourceMirrorMode.AOI_CLIPPED
     assert settings.enable_landsat_requester_pays is False
     assert settings.live_provider_tests is False
@@ -50,6 +57,37 @@ def test_memory_provider_routes_expose_manual_sentinel2_primary_only_by_default(
     assert route.provider_role == "primary"
     assert route.status == "manual_only"
     assert route.access_mode == "public_https"
+
+
+def test_landsat_seed_is_hidden_manual_with_signed_https_primary() -> None:
+    sources = StaticSourceCatalog().list_sources()
+    landsat = next(source for source in sources if source.source_id == "landsat-c2-l2")
+    repository = InMemorySourceProviderRouteRepository(build_memory_routes(PROVIDER_ROUTES))
+
+    routes = repository.list_by_source("landsat-c2-l2")
+    route = repository.get_by_route_key(
+        "landsat-c2-l2", "planetary-computer:landsat-c2-l2"
+    )
+
+    assert landsat.provider_adapter == "planetary-computer"
+    assert landsat.schedule_state == "manual"
+    assert landsat.product_exposure == "hidden"
+    assert landsat.supported_indices == ["ndvi", "msavi", "ndmi", "ndwi_green_nir"]
+    assert [item.route_key for item in routes] == ["planetary-computer:landsat-c2-l2"]
+    assert route is not None
+    assert route.provider_role == "primary"
+    assert route.status == "manual_only"
+    assert route.access_mode == "signed_https"
+
+
+def test_every_provider_route_references_a_seeded_execution_policy() -> None:
+    policy_keys = {policy["policy_key"] for policy in build_execution_policies()}
+
+    assert {
+        route["execution_policy_ref"]
+        for route in PROVIDER_ROUTES
+        if route.get("execution_policy_ref")
+    } <= policy_keys
 
 
 def test_memory_profiles_return_seeded_ndvi_defaults() -> None:

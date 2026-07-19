@@ -84,7 +84,7 @@ def test_readiness_reports_missing_index_coverage_from_golden_contract() -> None
     assert response.json() == _fixture("readiness_unavailable.json")
 
 
-def test_readiness_reports_source_mismatch() -> None:
+def test_readiness_reports_disabled_landsat_source() -> None:
     app = _app()
     client = TestClient(app)
 
@@ -96,8 +96,9 @@ def test_readiness_reports_source_mismatch() -> None:
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["status"] == "UNAVAILABLE"
-    assert data["reasonCode"] == "SOURCE_MISMATCH"
-    assert data["providerRoute"] == "earthsearch:sentinel-2-l2a"
+    assert data["reasonCode"] == "SOURCE_NOT_ENABLED"
+    assert data["providerRoute"] == "planetary-computer:landsat-c2-l2"
+    assert set(data["indexCoverage"]) == {"NDVI", "MSAVI", "NDMI", "NDWI_GREEN_NIR"}
 
 
 def test_recent_metadata_only_job_does_not_make_old_ndvi_outputs_fresh() -> None:

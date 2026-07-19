@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     earthsearch_timeout_seconds: float = Field(default=30.0, gt=0)
     earthsearch_page_size: int = Field(default=100, gt=0, le=1000)
 
+    planetary_computer_api_url: str = "https://planetarycomputer.microsoft.com/api/stac/v1"
+    planetary_computer_sas_url: str = "https://planetarycomputer.microsoft.com/api/sas/v1"
+    planetary_computer_timeout_seconds: float = Field(default=30.0, gt=0)
+    planetary_computer_page_size: int = Field(default=100, gt=0, le=1000)
+    planetary_computer_sas_refresh_margin_seconds: int = Field(default=300, ge=0)
+
     titiler_internal_url: str = "http://titiler:8000"
     titiler_timeout_seconds: float = Field(default=30.0, gt=0)
 
@@ -210,6 +216,31 @@ class Settings(BaseSettings):
     sentinel2_preload_schedule_day_of_week: str = "mon"
     sentinel2_preload_schedule_hour_utc: int = Field(default=2, ge=0, le=23)
     sentinel2_preload_schedule_minute_utc: int = Field(default=30, ge=0, le=59)
+
+    landsat_profile_version: str = "landsat-8-9-c2-l2-sr-qa-v1"
+    landsat_mask_profile_version: str = "landsat-c2-qa-mask-v1"
+    landsat_preload_source_id: str = "landsat-c2-l2"
+    landsat_preload_aoi_id: str = "bangalore_60km_geodesic_aoi"
+    landsat_preload_provider_route: str = "planetary-computer:landsat-c2-l2"
+    landsat_preload_mode: Literal[
+        "metadata_only", "mirror_only", "prepare_only", "full_pipeline"
+    ] = "full_pipeline"
+    landsat_preload_date_window_days: int = Field(default=180, gt=0)
+    landsat_preload_refresh_days: int = Field(default=8, gt=0)
+    landsat_revisit_days: int = Field(default=8, gt=0)
+    landsat_preload_freshness_max_age_hours: int = Field(default=192, gt=0)
+    landsat_readiness_enabled: bool = False
+    landsat_readiness_required_indices: Annotated[tuple[str, ...], NoDecode] = (
+        "ndvi",
+        "msavi",
+        "ndmi",
+        "ndwi_green_nir",
+    )
+    landsat_max_new_scenes_per_run: int = Field(default=1, gt=0, le=1)
+    landsat_search_cloud_hint_percentage: float = Field(default=80.0, ge=0, le=100)
+    landsat_preload_schedule_enabled: bool = False
+    landsat_preload_schedule_hour_utc: int = Field(default=3, ge=0, le=23)
+    landsat_preload_schedule_minute_utc: int = Field(default=0, ge=0, le=59)
     live_provider_tests: bool = False
 
     @field_validator("log_level")
@@ -242,6 +273,7 @@ class Settings(BaseSettings):
         "resourcesat_liss3_readiness_required_indices",
         "resourcesat_liss4_readiness_required_indices",
         "resourcesat_awifs_readiness_required_indices",
+        "landsat_readiness_required_indices",
         mode="before",
     )
     @classmethod

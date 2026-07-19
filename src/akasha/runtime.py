@@ -306,6 +306,47 @@ def create_nisar_ingestion_service(
     )
 
 
+def create_landsat_ingestion_service(
+    settings: Settings,
+    engine: Engine | None = None,
+    **overrides,
+):
+    from akasha.services.landsat_ingestion import LandsatIngestionService
+
+    scene_repository = overrides.get("scene_repository") or create_scene_repository(
+        settings, engine
+    )
+    raster_repository = overrides.get("raster_repository") or create_raster_repository(
+        settings, engine
+    )
+    return LandsatIngestionService(
+        job_store=overrides.get("job_store") or create_job_store(settings, engine),
+        stage_store=overrides.get("stage_store") or create_stage_store(settings, engine),
+        backfill_repository=(
+            overrides.get("backfill_repository") or create_backfill_repository(settings, engine)
+        ),
+        settings=settings,
+        aoi_repository=overrides.get("aoi_repository") or create_aoi_repository(settings, engine),
+        scene_repository=scene_repository,
+        asset_repository=overrides.get("asset_repository")
+        or create_asset_repository(settings, engine),
+        raster_repository=raster_repository,
+        object_store=overrides.get("object_store") or create_object_store(settings),
+        pgstac_repository=overrides.get("pgstac_repository")
+        if "pgstac_repository" in overrides
+        else create_pgstac_repository(settings, engine),
+        tile_layer_repository=overrides.get("tile_layer_repository")
+        or create_tile_layer_repository(
+            settings,
+            engine,
+            raster_repository=raster_repository,
+            scene_repository=scene_repository,
+        ),
+        provider=overrides.get("provider"),
+        mirroring_service=overrides.get("mirroring_service"),
+    )
+
+
 def create_field_query_repository(
     settings: Settings,
     engine: Engine | None = None,

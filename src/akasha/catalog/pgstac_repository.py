@@ -19,6 +19,13 @@ from akasha.processing.eos04 import (
     EOS04_PROCESSING_PROFILE_VERSION,
     EOS04_SOURCE_ID,
 )
+from akasha.processing.landsat import (
+    LANDSAT_MASK_PROFILE_VERSION,
+    LANDSAT_PGSTAC_COLLECTION_ID,
+    LANDSAT_PROCESSING_PROFILE_VERSION,
+    LANDSAT_PROVIDER_COLLECTION,
+    LANDSAT_SOURCE_ID,
+)
 from akasha.processing.nisar import (
     NISAR_COLLECTION_ID,
     NISAR_PGSTAC_COLLECTION_ID,
@@ -174,6 +181,75 @@ def build_derived_item(
                     "akasha:formula_version": output.formula_version,
                     "akasha:processing_profile_version": output.processing_profile_version,
                 },
+            ),
+        )
+    return item
+
+
+def build_landsat_derived_item(
+    *,
+    scene: ProviderSceneRecord,
+    prepared_assets: list[SceneAssetRecord],
+    outputs: list[RasterOutputRecord],
+    bbox: list[float],
+    geometry: dict[str, Any],
+) -> pystac.Item:
+    if scene.source_id != LANDSAT_SOURCE_ID:
+        raise ValueError("Landsat STAC builder requires the Landsat source")
+    properties = {
+        "platform": scene.provider_metadata.get("platform"),
+        "instruments": ["oli"],
+        "eo:cloud_cover": scene.cloud_percent,
+        "landsat:collection_number": "02",
+        "landsat:collection_category": "T1",
+        "landsat:correction": scene.provider_metadata.get("product_type"),
+        "landsat:wrs_path": scene.provider_metadata.get("wrs_path"),
+        "landsat:wrs_row": scene.provider_metadata.get("wrs_row"),
+        "akasha:source_id": LANDSAT_SOURCE_ID,
+        "akasha:provider_adapter": scene.provider_adapter,
+        "akasha:provider_collection": LANDSAT_PROVIDER_COLLECTION,
+        "akasha:provider_route": scene.provider_metadata.get("provider_route"),
+        "akasha:logical_scene_key": scene.logical_scene_key,
+        "akasha:aoi_id": scene.aoi_id,
+        "akasha:processing_profile_version": LANDSAT_PROCESSING_PROFILE_VERSION,
+        "akasha:mask_profile_version": LANDSAT_MASK_PROFILE_VERSION,
+        "classification:classes": _landsat_classification_classes(),
+    }
+    item = _base_derived_item(
+        scene=scene,
+        item_id=scene.pgstac_item_id or _landsat_item_id(scene),
+        collection_id=LANDSAT_PGSTAC_COLLECTION_ID,
+        bbox=bbox,
+        geometry=geometry,
+        stac_extensions=list(DERIVED_STAC_EXTENSIONS),
+        properties=properties,
+    )
+    _apply_projection_properties(item, outputs)
+    for asset in prepared_assets:
+        if asset.asset_key not in {"analytic", "mask"}:
+            continue
+        roles = ["data", "reflectance"] if asset.asset_key == "analytic" else ["data", "quality"]
+        item.add_asset(
+            asset.asset_key,
+            pystac.Asset(
+                href=str(asset.asset_href or asset.object_path),
+                media_type=pystac.MediaType.COG,
+                roles=roles,
+                title=f"Landsat {asset.asset_key} COG",
+                extra_fields=dict(asset.metadata),
+            ),
+        )
+    for output in outputs:
+        if output.index_name is None:
+            continue
+        item.add_asset(
+            output.index_name,
+            pystac.Asset(
+                href=str(output.metadata.get("pgstac_href") or output.object_path),
+                media_type=pystac.MediaType.COG,
+                roles=["data", "derived", output.index_name],
+                title=f"{output.index_name.upper()} Landsat derived index",
+                extra_fields=_derived_asset_fields(output),
             ),
         )
     return item
@@ -393,6 +469,11 @@ def _nisar_item_id(scene: ProviderSceneRecord) -> str:
     return f"nisar-ssar-gcov-{acquisition}-{product_hash}"
 
 
+def _landsat_item_id(scene: ProviderSceneRecord) -> str:
+    product_hash = sha256(scene.provider_product_id.encode()).hexdigest()[:12]
+    return f"landsat-c2-l2-{scene.provider_product_id.lower()}-{product_hash}"
+
+
 def _json_dumps(value: dict[str, Any]) -> str:
     from json import dumps
 
@@ -424,6 +505,8 @@ def collection_json(collection_id: str) -> dict[str, Any]:
         return _eos04_collection(collection_id)
     if collection_id == NISAR_PGSTAC_COLLECTION_ID:
         return _nisar_collection(collection_id)
+    if collection_id == LANDSAT_PGSTAC_COLLECTION_ID:
+        return _landsat_collection(collection_id)
     return _generic_collection(collection_id)
 
 
@@ -543,6 +626,36 @@ def _nisar_collection(collection_id: str) -> dict[str, Any]:
     }
 
 
+def _landsat_collection(collection_id: str) -> dict[str, Any]:
+    now = datetime.now(UTC).isoformat()
+    return {
+        "type": "Collection",
+        "stac_version": "1.0.0",
+        "stac_extensions": list(DERIVED_STAC_EXTENSIONS),
+        "id": collection_id,
+        "title": "Akasha Landsat 8/9 Collection 2 Level-2",
+        "description": (
+            "Cloud-masked 30 m Landsat 8/9 Collection 2 Level-2 surface reflectance "
+            "and derived field-monitoring indices."
+        ),
+        "license": "proprietary",
+        "extent": {
+            "spatial": {"bbox": [[-180, -90, 180, 90]]},
+            "temporal": {"interval": [[now, None]]},
+        },
+        "summaries": {
+            "platform": ["landsat-8", "landsat-9"],
+            "instruments": ["oli"],
+            "akasha:source_id": [LANDSAT_SOURCE_ID],
+            "akasha:provider_collection": [LANDSAT_PROVIDER_COLLECTION],
+            "akasha:supported_indices": ["ndvi", "msavi", "ndmi", "ndwi_green_nir"],
+            "akasha:mask_method": [LANDSAT_MASK_PROFILE_VERSION],
+            "classification:classes": _landsat_classification_classes(),
+        },
+        "links": [],
+    }
+
+
 def _generic_collection(collection_id: str) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
     return {
@@ -616,6 +729,17 @@ def _classification_classes() -> list[dict[str, Any]]:
             "nodata": item.value == 0,
         }
         for item in RESOURCESAT_MASK_CLASSES
+    ]
+
+
+def _landsat_classification_classes() -> list[dict[str, Any]]:
+    return [
+        {"value": 0, "name": "nodata", "title": "Nodata", "nodata": True},
+        {"value": 1, "name": "valid_land", "title": "Valid land"},
+        {"value": 2, "name": "cloud_or_cirrus", "title": "Cloud or cirrus"},
+        {"value": 3, "name": "cloud_shadow", "title": "Cloud shadow"},
+        {"value": 4, "name": "water", "title": "Water"},
+        {"value": 5, "name": "snow_or_ice", "title": "Snow or ice"},
     ]
 
 

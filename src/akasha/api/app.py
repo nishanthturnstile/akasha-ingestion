@@ -25,6 +25,7 @@ from akasha.runtime import (
     create_eos04_ingestion_service,
     create_field_query_repository,
     create_job_store,
+    create_landsat_ingestion_service,
     create_nisar_ingestion_service,
     create_object_store,
     create_pgstac_repository,
@@ -63,6 +64,7 @@ from akasha.services.analytics import (
 )
 from akasha.services.eos04_ingestion import Eos04IngestionService
 from akasha.services.ingestion import MockIngestionService
+from akasha.services.landsat_ingestion import LandsatIngestionService
 from akasha.services.natural_imagery import (
     NaturalImageryNotFound,
     NaturalImageryService,
@@ -191,6 +193,20 @@ def create_app(
         object_store=objects,
         pgstac_repository=pgstac_repository,
     )
+    landsat_service = create_landsat_ingestion_service(
+        app_settings,
+        engine,
+        job_store=store,
+        stage_store=stage_store,
+        backfill_repository=backfill_repository,
+        aoi_repository=aoi_repository,
+        scene_repository=scene_repository,
+        asset_repository=asset_repository,
+        raster_repository=raster_repository,
+        object_store=objects,
+        pgstac_repository=pgstac_repository,
+        tile_layer_repository=tile_layer_repository,
+    )
     analytics_service = AnalyticsService(
         field_query_repository=field_query_repository,
         scene_repository=scene_repository,
@@ -249,6 +265,7 @@ def create_app(
     app.state.resourcesat_ingestion_service = resourcesat_service
     app.state.eos04_ingestion_service = eos04_service
     app.state.nisar_ingestion_service = nisar_service
+    app.state.landsat_ingestion_service = landsat_service
     app.state.analytics_service = analytics_service
     app.state.readiness_service = readiness_service
     app.state.natural_imagery_service = natural_imagery_service
@@ -402,6 +419,11 @@ def create_app(
                 request.app.state.nisar_ingestion_service
             )
             job = nisar_service_obj.start_backfill(payload)
+        elif payload.job_type == "landsat_backfill":
+            landsat_service_obj: LandsatIngestionService = (
+                request.app.state.landsat_ingestion_service
+            )
+            job = landsat_service_obj.start_backfill(payload)
         else:
             service_obj: MockIngestionService = request.app.state.ingestion_service
             job = service_obj.start_mock_sync(payload)

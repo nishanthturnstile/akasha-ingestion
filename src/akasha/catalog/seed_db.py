@@ -15,6 +15,16 @@ from akasha.processing.eos04 import (
     EOS04_PROCESSING_PROFILE_VERSION,
     EOS04_SOURCE_ID,
 )
+from akasha.processing.landsat import (
+    LANDSAT_MASK_PROFILE_VERSION,
+    LANDSAT_PGSTAC_COLLECTION_ID,
+    LANDSAT_PRIMARY_PROVIDER_ROUTE,
+    LANDSAT_PROCESSING_PROFILE_VERSION,
+    LANDSAT_PROVIDER_COLLECTION,
+    LANDSAT_REFLECTANCE_OFFSET,
+    LANDSAT_REFLECTANCE_SCALE,
+    LANDSAT_SOURCE_ID,
+)
 from akasha.processing.nisar import (
     NISAR_COLLECTION_ID,
     NISAR_PGSTAC_COLLECTION_ID,
@@ -177,6 +187,42 @@ SOURCE_METADATA: dict[str, dict[str, Any]] = {
             "pgstac_collection": "akasha-sentinel-2-l2a-derived-v1",
         },
     },
+    LANDSAT_SOURCE_ID: {
+        "status": "manual_only",
+        "execution_policy_ref": "planetary-computer-default",
+        "validation_profile": {
+            "version": LANDSAT_MASK_PROFILE_VERSION,
+            "checks": [
+                "landsat_8_9_tier1_identity",
+                "collection_2_reflectance_metadata",
+                "qa_pixel_bitmask_validation",
+                "qa_radsat_validation",
+                "source_cog_mirror_validation",
+                "field_index_response_validation",
+            ],
+        },
+        "processing_profile": {
+            "version": LANDSAT_PROCESSING_PROFILE_VERSION,
+            "source": "planetary-computer",
+            "level": "Collection-2-Level-2",
+            "platforms": ["landsat-8", "landsat-9"],
+            "reflectance_scale": LANDSAT_REFLECTANCE_SCALE,
+            "reflectance_offset": LANDSAT_REFLECTANCE_OFFSET,
+            "mask": LANDSAT_MASK_PROFILE_VERSION,
+        },
+        "license_profile": {
+            "profile": "usgs-open-data",
+            "serving": "internal_private",
+        },
+        "provider_metadata": {
+            "primary_route": LANDSAT_PRIMARY_PROVIDER_ROUTE,
+            "provider_collection": LANDSAT_PROVIDER_COLLECTION,
+            "pgstac_collection": LANDSAT_PGSTAC_COLLECTION_ID,
+            "signed_asset_access": True,
+            "persist_signed_urls": False,
+            "product_exposure": "hidden",
+        },
+    },
     EOS04_SOURCE_ID: {
         "status": "manual_only",
         "execution_policy_ref": "bhoonidhi-default",
@@ -284,17 +330,34 @@ PROVIDER_ROUTES: tuple[dict[str, Any], ...] = (
     },
     {
         "source_id": "landsat-c2-l2",
+        "provider_adapter": "planetary-computer",
+        "provider_collection": "landsat-c2-l2",
+        "provider_priority": 1,
+        "provider_role": "primary",
+        "status": "manual_only",
+        "access_mode": "signed_https",
+        "execution_policy_ref": "planetary-computer-default",
+        "license_profile": "usgs-open-data",
+        "metadata": {
+            "route_key": "planetary-computer:landsat-c2-l2",
+            "sas_token_required": True,
+            "persist_signed_urls": False,
+        },
+    },
+    {
+        "source_id": "landsat-c2-l2",
         "provider_adapter": "earthsearch",
         "provider_collection": "landsat-c2-l2",
-        "provider_priority": 20,
-        "provider_role": "secondary",
+        "provider_priority": 50,
+        "provider_role": "fallback",
         "status": "inactive",
-        "access_mode": "public_https",
-        "execution_policy_ref": "earthsearch-default",
+        "access_mode": "requester_pays_s3",
+        "execution_policy_ref": "earthsearch-requester-pays",
         "license_profile": "usgs-open-data",
         "metadata": {
             "route_key": "earthsearch:landsat-c2-l2",
-            "requester_pays_may_apply": True,
+            "requester_pays": True,
+            "explicit_billing_approval_required": True,
         },
     },
     {
@@ -635,8 +698,8 @@ def _execution_policy(
     }
 
 
-def seed_execution_policies(connection) -> None:
-    policies = [
+def build_execution_policies() -> list[dict[str, Any]]:
+    return [
         _execution_policy(
             policy_key="mock-default",
             provider_adapter="mock",
@@ -650,6 +713,20 @@ def seed_execution_policies(connection) -> None:
             auth_model="none",
             enabled=True,
             version="phase2-earthsearch-v1",
+        ),
+        _execution_policy(
+            policy_key="planetary-computer-default",
+            provider_adapter="planetary-computer",
+            auth_model="anonymous_sas_signing",
+            enabled=True,
+            version="landsat-c2-l2-planetary-computer-v1",
+        ),
+        _execution_policy(
+            policy_key="earthsearch-requester-pays",
+            provider_adapter="earthsearch",
+            auth_model="aws_requester_pays",
+            enabled=False,
+            version="landsat-c2-l2-earthsearch-requester-pays-v1",
         ),
         _execution_policy(
             policy_key="cdse-default",
@@ -683,6 +760,10 @@ def seed_execution_policies(connection) -> None:
             version="phase1-v1",
         ),
     ]
+
+
+def seed_execution_policies(connection) -> None:
+    policies = build_execution_policies()
     for policy in policies:
         connection.execute(
             text(

@@ -193,6 +193,66 @@ def test_resourcesat_backfill_rejects_wrong_provider_route() -> None:
     assert "bhoonidhi:ResourceSat-2A_LISS3_BOA" in response.json()["error"]["message"]
 
 
+def test_landsat_backfill_requires_exact_source_and_provider_route() -> None:
+    api_key = "test-akasha-key"
+    app = create_app(
+        Settings(
+            environment=Environment.TEST,
+            runtime_backend=RuntimeBackend.MEMORY,
+            api_key_hashes=f"test:{hash_api_key(api_key)}",
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/ingestion/sync",
+        headers={"X-API-Key": api_key},
+        json={
+            "source_id": "landsat-c2-l2",
+            "provider_route": "earthsearch:landsat-c2-l2",
+            "aoi_id": "bangalore_60km_geodesic_aoi",
+            "date_start": "2026-01-01",
+            "date_end": "2026-01-31",
+            "job_type": "landsat_backfill",
+            "mode": "metadata_only",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "planetary-computer:landsat-c2-l2" in response.json()["error"]["message"]
+
+
+def test_landsat_metadata_backfill_dispatches_to_landsat_service() -> None:
+    api_key = "test-akasha-key"
+    app = create_app(
+        Settings(
+            environment=Environment.TEST,
+            runtime_backend=RuntimeBackend.MEMORY,
+            task_always_eager=True,
+            api_key_hashes=f"test:{hash_api_key(api_key)}",
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/ingestion/sync",
+        headers={"X-API-Key": api_key},
+        json={
+            "source_id": "landsat-c2-l2",
+            "provider_route": "planetary-computer:landsat-c2-l2",
+            "aoi_id": "bangalore_60km_geodesic_aoi",
+            "date_start": "2026-01-01",
+            "date_end": "2026-01-31",
+            "job_type": "landsat_backfill",
+            "mode": "metadata_only",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["data"]["job_type"] == "landsat_backfill"
+    assert response.json()["data"]["status"] == "completed"
+
+
 def test_mock_sync_rejects_provider_route() -> None:
     api_key = "test-akasha-key"
     app = create_app(
