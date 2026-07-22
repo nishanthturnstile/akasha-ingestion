@@ -28,6 +28,7 @@ from akasha.processing.landsat import (
 from akasha.processing.nisar import NISAR_PROCESSING_PROFILE_VERSION, NISAR_SOURCE_ID
 from akasha.processing.raster_source import RasterSource, open_raster
 from akasha.processing.raster_stats import categorical_mask_stats, raster_stats, sar_field_stats
+from akasha.processing.render_profiles import resolve_render_profile
 from akasha.processing.resourcesat import (
     RESOURCESAT_FORMULA_VERSION,
     RESOURCESAT_MASK_METHOD,
@@ -135,6 +136,12 @@ class AnalyticsService:
             threshold = selected.threshold
             visualization = selected.visualization
             valid_pixels = selected.valid_pixels
+            render_profile = resolve_render_profile(
+                index_name=index_name,
+                requested=request.renderProfile,
+                scene_min=stats.get("min"),
+                scene_max=stats.get("max"),
+            )
             warnings = _quality_warnings(source_id)
             quality_status = "WARN" if warnings else "GOOD"
             quality_reason = (
@@ -194,7 +201,16 @@ class AnalyticsService:
                     layer_id=layer.layer_id,
                     valid_pixel_count=valid_pixels,
                     selection_reason="source_aware_quality_first",
-                    stats_json={**stats, "cloudPercentage": selected.cloud_percentage},
+                    stats_json={
+                        **stats,
+                        "cloudPercentage": selected.cloud_percentage,
+                        "renderProfile": render_profile.applied,
+                        "renderProfileRequested": render_profile.requested,
+                        "renderProfileVersion": render_profile.version,
+                        "renderThresholds": list(render_profile.thresholds),
+                        "renderPalette": list(render_profile.palette),
+                        "renderFallbackReason": render_profile.fallback_reason,
+                    },
                     class_area_json=class_stats,
                     quality_json={
                         "status": quality_status,
@@ -234,8 +250,7 @@ class AnalyticsService:
                     f"?{overlay_ref.query_string()}"
                 ),
                 pointUrl=(
-                    f"{self._settings.public_base_url}{point_template}"
-                    f"?{point_ref.query_string()}"
+                    f"{self._settings.public_base_url}{point_template}?{point_ref.query_string()}"
                 ),
                 selection=FieldIndexSelection(
                     windowDays=window_days,
@@ -259,11 +274,18 @@ class AnalyticsService:
                     displayProfile=visualization.version if visualization else None,
                     thresholdProfile=threshold.version if threshold else None,
                     legend=visualization.palette_json if visualization else [],
+                    requestedProfile=render_profile.requested,
+                    appliedProfile=render_profile.applied,
+                    profileVersion=render_profile.version,
+                    thresholds=list(render_profile.thresholds),
+                    palette=list(render_profile.palette),
+                    fallbackReason=render_profile.fallback_reason,
                 ),
                 versions={
                     "atmosphericCorrection": _atmospheric_correction_version(source_id),
                     "cloudMask": raster.cloud_mask_version or _default_cloud_mask(source_id),
-                    "formula": raster.formula_version or _default_formula_version(
+                    "formula": raster.formula_version
+                    or _default_formula_version(
                         source_id,
                         index_name,
                     ),
@@ -284,10 +306,7 @@ class AnalyticsService:
 
         return self._unavailable(
             request,
-            (
-                "No optical scene with field usable-pixels >= 80% within "
-                f"+/- {window_days} days"
-            ),
+            (f"No optical scene with field usable-pixels >= 80% within +/- {window_days} days"),
         )
 
     def field_dates(self, request: FieldDatesRequest) -> FieldDatesResponse:
@@ -535,7 +554,7 @@ class AnalyticsService:
                 geometry_hash=self._signing.query_hash(
                     dumps(request.geometry, sort_keys=True, separators=(",", ":"))
                 ),
-            analysis_version="sar-field-evidence-v1",
+                analysis_version="sar-field-evidence-v1",
             )
         )
         return FieldSarAvailableResponse(
@@ -559,8 +578,7 @@ class AnalyticsService:
             ),
             provenance=provenance,
             overlayUrl=(
-                f"{self._settings.public_base_url}{overlay_template}"
-                f"?{overlay_ref.query_string()}"
+                f"{self._settings.public_base_url}{overlay_template}?{overlay_ref.query_string()}"
             ),
             **temporal,
         )
@@ -600,9 +618,7 @@ class AnalyticsService:
         except ObjectStoreNotFoundError as exc:
             raise AnalyticsRasterNotFound("SAR backscatter was not found.") from exc
         except (ObjectStoreReadError, RasterioError) as exc:
-            raise AnalyticsRasterUnavailable(
-                "SAR backscatter is temporarily unavailable."
-            ) from exc
+            raise AnalyticsRasterUnavailable("SAR backscatter is temporarily unavailable.") from exc
 
     def _backscatter_asset(self, scene_id: str):
         if self._asset_repository is None:
@@ -623,9 +639,7 @@ class AnalyticsService:
         current_scene: ProviderSceneRecord,
         current_stats: dict[str, object],
     ) -> dict[str, object]:
-        current_metadata = dict(
-            current_scene.provider_metadata.get("comparison_metadata") or {}
-        )
+        current_metadata = dict(current_scene.provider_metadata.get("comparison_metadata") or {})
         if current_scene.acquisition_at is None:
             return build_sar_temporal_analysis(
                 current_metadata=current_metadata,
@@ -655,9 +669,7 @@ class AnalyticsService:
                 continue
             object_path = asset.mirror_object_path or asset.object_path
             polarizations = [
-                str(value).upper()
-                for value in asset.metadata.get("polarizations", [])
-                if value
+                str(value).upper() for value in asset.metadata.get("polarizations", []) if value
             ]
             if not object_path or not polarizations:
                 continue
@@ -890,9 +902,7 @@ class AnalyticsService:
     def _validate_source_index(self, source_id: str, index_name: str) -> None:
         if source_id == self._settings.sentinel2_preload_source_id:
             if index_name not in SENTINEL2_INDEX_ASSETS:
-                raise ValueError(
-                    f"unsupported index for {source_id}: {index_name}"
-                )
+                raise ValueError(f"unsupported index for {source_id}: {index_name}")
             return
         if source_id == LANDSAT_SOURCE_ID:
             if index_name not in LANDSAT_INDEX_ASSETS:
@@ -941,6 +951,8 @@ class AnalyticsService:
                 index_name=record.index_name,
                 scale_factor=raster.scale_factor,
                 nodata=raster.nodata_value,
+                thresholds=tuple(record.stats_json.get("renderThresholds") or ()),
+                palette=tuple(record.stats_json.get("renderPalette") or ()),
             )
         except ObjectStoreNotFoundError as exc:
             raise AnalyticsRasterNotFound("Raster output was not found.") from exc

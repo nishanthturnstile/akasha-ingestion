@@ -99,9 +99,7 @@ class Sentinel2IngestionService:
             settings.runtime_backend == RuntimeBackend.MEMORY and not settings.live_provider_tests
         )
         self._provider = provider or (
-            _EmptyProvider()
-            if use_empty_provider
-            else EarthSearchProvider(settings)
+            _EmptyProvider() if use_empty_provider else EarthSearchProvider(settings)
         )
         self._mirroring_service = mirroring_service
 
@@ -116,10 +114,7 @@ class Sentinel2IngestionService:
             aoi_id=aoi_id,
         )
         for scene in reversed(scenes):
-            if (
-                scene.acquisition_at is not None
-                and self._scene_is_complete(scene)
-            ):
+            if scene.acquisition_at is not None and self._scene_is_complete(scene):
                 return scene.acquisition_at.date()
         return None
 
@@ -438,9 +433,7 @@ class Sentinel2IngestionService:
             second_values = _match_grid(second, first, resampling=Resampling.bilinear)
             scl_values = _match_grid(scl, first, resampling=Resampling.nearest).astype("uint8")
             valid_mask = (
-                np.isfinite(first.values)
-                & np.isfinite(second_values)
-                & scl_valid_mask(scl_values)
+                np.isfinite(first.values) & np.isfinite(second_values) & scl_valid_mask(scl_values)
             )
             output_transform = first.transform
             output_crs = first.crs
@@ -542,6 +535,8 @@ class Sentinel2IngestionService:
             outputs=outputs,
             bbox=item.bbox,
             geometry=scene.scene_geometry,
+            source_assets=self._asset_repository.list_for_scene(scene.id or ""),
+            mirror_bucket=self._settings.minio_bucket,
         )
         self._pgstac_repository.upsert_item_json(item_json)
         scene.pgstac_item_id = item_json.id

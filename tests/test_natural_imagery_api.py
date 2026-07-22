@@ -12,7 +12,10 @@ from akasha.processing.eos04 import EOS04_SOURCE_ID
 from akasha.processing.landsat import LANDSAT_PGSTAC_COLLECTION_ID, LANDSAT_SOURCE_ID
 from akasha.processing.nisar import NISAR_SOURCE_ID
 from akasha.security import hash_api_key
-from akasha.services.natural_imagery import NaturalImageryService
+from akasha.services.natural_imagery import (
+    SENTINEL2_SOURCE_ID,
+    NaturalImageryService,
+)
 
 API_KEY = "test-akasha-key"
 AOI_ID = "bangalore"
@@ -47,25 +50,47 @@ def _app_with_scene(
             source_id=source_id,
             provider_product_id=f"{source_id}-20260711",
             acquisition_at=datetime(2026, 7, 11, 5, 30, tzinfo=UTC),
+            scene_geometry=(
+                {
+                    "type": "Polygon",
+                    "coordinates": [
+                        [[77.0, 12.0], [78.0, 12.0], [78.0, 13.0], [77.0, 13.0], [77.0, 12.0]]
+                    ],
+                }
+                if source_id == SENTINEL2_SOURCE_ID
+                else None
+            ),
             status="accepted",
+            cloud_percent=4.0 if source_id == SENTINEL2_SOURCE_ID else None,
             pgstac_item_id=f"{source_id}-20260711",
             aoi_id=AOI_ID,
         )
     )
     assert scene.id is not None
-    is_landsat = source_id == LANDSAT_SOURCE_ID
-    app.state.asset_repository.upsert(
-        SceneAssetRecord(
-            id=None,
-            scene_id=scene.id,
-            asset_kind="prepared" if is_landsat else "analytic",
-            asset_key="analytic" if is_landsat else "backscatter",
-            metadata={
-                "bbox": [77.0, 12.0, 78.0, 13.0],
-                "polarizations": polarizations or ["VV", "VH"],
-            },
-        )
+    asset_keys = (
+        ("red", "green", "blue")
+        if source_id == SENTINEL2_SOURCE_ID
+        else ("analytic",)
+        if source_id == LANDSAT_SOURCE_ID
+        else ("backscatter",)
     )
+    for asset_key in asset_keys:
+        app.state.asset_repository.upsert(
+            SceneAssetRecord(
+                id=None,
+                scene_id=scene.id,
+                asset_kind="source" if source_id == SENTINEL2_SOURCE_ID else "prepared",
+                asset_key=asset_key,
+                mirror_status="mirrored" if source_id == SENTINEL2_SOURCE_ID else "not_required",
+                mirror_object_path=(
+                    f"raw/sentinel/{asset_key}.tif" if source_id == SENTINEL2_SOURCE_ID else None
+                ),
+                metadata={
+                    "bbox": [77.0, 12.0, 78.0, 13.0],
+                    "polarizations": polarizations or ["VV", "VH"],
+                },
+            )
+        )
     if second_scene:
         duplicate = app.state.scene_repository.upsert(
             ProviderSceneRecord(
@@ -99,6 +124,37 @@ def _app_with_scene(
         tile_service=tile_service,
     )
     return TestClient(app), tile_service
+
+
+def test_latest_imagery_search_returns_prepared_full_coverage_scene_and_same_scene_tiles() -> None:
+    client, tile_service = _app_with_scene(source_id=SENTINEL2_SOURCE_ID)
+    viewport = {
+        "type": "Polygon",
+        "coordinates": [[[77.1, 12.1], [77.2, 12.1], [77.2, 12.2], [77.1, 12.2], [77.1, 12.1]]],
+    }
+
+    response = client.post(
+        "/api/v1/imagery/search",
+        json={"viewport": viewport},
+        headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 200
+    candidate = response.json()["data"]["candidates"][0]
+    assert candidate["sourceId"] == SENTINEL2_SOURCE_ID
+    assert candidate["processingLevel"] == "L2A"
+    assert candidate["cloudPercent"] == 4.0
+    assert candidate["coveragePercent"] == 100.0
+    assert candidate["coverageStatus"] == "full"
+    assert candidate["usable"] is True
+
+    tile = client.get(
+        f"/api/v1/imagery/scenes/{candidate['sceneId']}/tiles/8/182/105.png",
+        headers={"X-API-Key": API_KEY},
+    )
+    assert tile.status_code == 200
+    assert tile_service.calls[-1]["assets"] == "red,green,blue"
+    assert tile_service.calls[-1]["asset_bidx"] is None
 
 
 def test_eos04_dates_expose_radar_metadata_without_optical_quality() -> None:
@@ -203,9 +259,7 @@ def test_nisar_dates_and_tile_prefer_actual_hh_band() -> None:
     assert dates.status_code == 200
     assert dates.json()["data"]["dates"][0]["polarizations"] == ["HV", "HH"]
     assert tile.status_code == 200
-    assert tile_service.calls[0]["collection_id"] == (
-        "akasha-nisar-ssar-beta-gcov-backscatter-v1"
-    )
+    assert tile_service.calls[0]["collection_id"] == ("akasha-nisar-ssar-beta-gcov-backscatter-v1")
     assert tile_service.calls[0]["asset_bidx"] == "backscatter|2"
 
 

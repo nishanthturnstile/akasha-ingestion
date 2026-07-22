@@ -6,6 +6,7 @@ from json import dumps
 from typing import Any
 from uuid import uuid4
 
+from shapely.geometry import shape
 from sqlalchemy import Engine, text
 
 
@@ -117,6 +118,45 @@ class InMemorySceneRepository:
         )
         return scenes[:limit]
 
+    def list_spatial(
+        self,
+        *,
+        source_id: str,
+        viewport: dict[str, Any],
+        start_date: date,
+        end_date: date,
+        max_cloud_percentage: float,
+        limit: int,
+    ) -> list[tuple[ProviderSceneRecord, float]]:
+        viewport_shape = shape(viewport)
+        denominator = viewport_shape.area
+        matches: list[tuple[ProviderSceneRecord, float]] = []
+        for scene in self._scenes.values():
+            if (
+                scene.source_id != source_id
+                or scene.status != "accepted"
+                or scene.acquisition_at is None
+                or not (start_date <= scene.acquisition_at.date() <= end_date)
+                or scene.scene_geometry is None
+                or scene.cloud_percent is None
+                or scene.cloud_percent > max_cloud_percentage
+            ):
+                continue
+            footprint = shape(scene.scene_geometry)
+            if not footprint.intersects(viewport_shape):
+                continue
+            coverage = (
+                100.0
+                if denominator <= 0
+                else min(100.0, footprint.intersection(viewport_shape).area / denominator * 100.0)
+            )
+            matches.append((scene, coverage))
+        matches.sort(
+            key=lambda item: item[0].acquisition_at or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        return matches[:limit]
+
 
 class DatabaseSceneRepository:
     def __init__(self, engine: Engine) -> None:
@@ -124,9 +164,10 @@ class DatabaseSceneRepository:
 
     def upsert(self, scene: ProviderSceneRecord) -> ProviderSceneRecord:
         with self._engine.begin() as connection:
-            row = connection.execute(
-                text(
-                    """
+            row = (
+                connection.execute(
+                    text(
+                        """
                     INSERT INTO akasha.provider_scenes (
                         provider_adapter,
                         source_id,
@@ -193,23 +234,30 @@ class DatabaseSceneRepository:
                         updated_at = now()
                     RETURNING *, ST_AsGeoJSON(scene_geometry)::json AS scene_geometry_geojson
                     """
-                ),
-                _scene_params(scene),
-            ).mappings().one()
+                    ),
+                    _scene_params(scene),
+                )
+                .mappings()
+                .one()
+            )
         return _row_to_scene(row)
 
     def get(self, scene_id: str) -> ProviderSceneRecord | None:
         with self._engine.connect() as connection:
-            row = connection.execute(
-                text(
-                    """
+            row = (
+                connection.execute(
+                    text(
+                        """
                     SELECT *, ST_AsGeoJSON(scene_geometry)::json AS scene_geometry_geojson
                     FROM akasha.provider_scenes
                     WHERE id = CAST(:scene_id AS uuid)
                     """
-                ),
-                {"scene_id": scene_id},
-            ).mappings().first()
+                    ),
+                    {"scene_id": scene_id},
+                )
+                .mappings()
+                .first()
+            )
         return _row_to_scene(row) if row else None
 
     def get_by_provider_product(
@@ -219,36 +267,44 @@ class DatabaseSceneRepository:
         provider_product_id: str,
     ) -> ProviderSceneRecord | None:
         with self._engine.connect() as connection:
-            row = connection.execute(
-                text(
-                    """
+            row = (
+                connection.execute(
+                    text(
+                        """
                     SELECT *, ST_AsGeoJSON(scene_geometry)::json AS scene_geometry_geojson
                     FROM akasha.provider_scenes
                     WHERE provider_adapter = :provider_adapter
                       AND provider_product_id = :provider_product_id
                     """
-                ),
-                {
-                    "provider_adapter": provider_adapter,
-                    "provider_product_id": provider_product_id,
-                },
-            ).mappings().first()
+                    ),
+                    {
+                        "provider_adapter": provider_adapter,
+                        "provider_product_id": provider_product_id,
+                    },
+                )
+                .mappings()
+                .first()
+            )
         return _row_to_scene(row) if row else None
 
     def list_for_source_aoi(self, *, source_id: str, aoi_id: str) -> list[ProviderSceneRecord]:
         with self._engine.connect() as connection:
-            rows = connection.execute(
-                text(
-                    """
+            rows = (
+                connection.execute(
+                    text(
+                        """
                     SELECT *, ST_AsGeoJSON(scene_geometry)::json AS scene_geometry_geojson
                     FROM akasha.provider_scenes
                     WHERE source_id = :source_id
                       AND aoi_id = :aoi_id
                     ORDER BY acquisition_at ASC NULLS LAST, created_at ASC
                     """
-                ),
-                {"source_id": source_id, "aoi_id": aoi_id},
-            ).mappings().all()
+                    ),
+                    {"source_id": source_id, "aoi_id": aoi_id},
+                )
+                .mappings()
+                .all()
+            )
         return [_row_to_scene(row) for row in rows]
 
     def list_candidates(
@@ -261,9 +317,10 @@ class DatabaseSceneRepository:
         limit: int,
     ) -> list[ProviderSceneRecord]:
         with self._engine.connect() as connection:
-            rows = connection.execute(
-                text(
-                    """
+            rows = (
+                connection.execute(
+                    text(
+                        """
                     SELECT *, ST_AsGeoJSON(scene_geometry)::json AS scene_geometry_geojson
                     FROM akasha.provider_scenes
                     WHERE source_id = :source_id
@@ -273,15 +330,18 @@ class DatabaseSceneRepository:
                       acquisition_at DESC
                     LIMIT :limit
                     """
-                ),
-                {
-                    "source_id": source_id,
-                    "requested_date": requested_date,
-                    "start_date": requested_date - timedelta(days=window_days),
-                    "end_date": requested_date + timedelta(days=window_days),
-                    "limit": limit,
-                },
-            ).mappings().all()
+                    ),
+                    {
+                        "source_id": source_id,
+                        "requested_date": requested_date,
+                        "start_date": requested_date - timedelta(days=window_days),
+                        "end_date": requested_date + timedelta(days=window_days),
+                        "limit": limit,
+                    },
+                )
+                .mappings()
+                .all()
+            )
         return [_row_to_scene(row) for row in rows]
 
     def list_range(
@@ -293,9 +353,10 @@ class DatabaseSceneRepository:
         limit: int,
     ) -> list[ProviderSceneRecord]:
         with self._engine.connect() as connection:
-            rows = connection.execute(
-                text(
-                    """
+            rows = (
+                connection.execute(
+                    text(
+                        """
                     SELECT *, ST_AsGeoJSON(scene_geometry)::json AS scene_geometry_geojson
                     FROM akasha.provider_scenes
                     WHERE source_id = :source_id
@@ -303,15 +364,70 @@ class DatabaseSceneRepository:
                     ORDER BY acquisition_at DESC
                     LIMIT :limit
                     """
-                ),
-                {
-                    "source_id": source_id,
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "limit": limit,
-                },
-            ).mappings().all()
+                    ),
+                    {
+                        "source_id": source_id,
+                        "start_date": start_date,
+                        "end_date": end_date,
+                        "limit": limit,
+                    },
+                )
+                .mappings()
+                .all()
+            )
         return [_row_to_scene(row) for row in rows]
+
+    def list_spatial(
+        self,
+        *,
+        source_id: str,
+        viewport: dict[str, Any],
+        start_date: date,
+        end_date: date,
+        max_cloud_percentage: float,
+        limit: int,
+    ) -> list[tuple[ProviderSceneRecord, float]]:
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    text(
+                        """
+                    WITH requested AS (
+                        SELECT ST_SetSRID(ST_GeomFromGeoJSON(:viewport), 4326) AS geom
+                    )
+                    SELECT provider_scenes.*,
+                           ST_AsGeoJSON(scene_geometry)::json AS scene_geometry_geojson,
+                           LEAST(
+                               100.0,
+                               100.0 * ST_Area(
+                                   ST_Intersection(scene_geometry, requested.geom)::geography
+                               ) / NULLIF(ST_Area(requested.geom::geography), 0)
+                           ) AS viewport_coverage_percent
+                    FROM akasha.provider_scenes, requested
+                    WHERE source_id = :source_id
+                      AND status = 'accepted'
+                      AND acquisition_at::date BETWEEN :start_date AND :end_date
+                      AND cloud_percent IS NOT NULL
+                      AND cloud_percent <= :max_cloud_percentage
+                      AND scene_geometry IS NOT NULL
+                      AND ST_Intersects(scene_geometry, requested.geom)
+                    ORDER BY acquisition_at DESC
+                    LIMIT :limit
+                    """
+                    ),
+                    {
+                        "source_id": source_id,
+                        "viewport": dumps(viewport),
+                        "start_date": start_date,
+                        "end_date": end_date,
+                        "max_cloud_percentage": max_cloud_percentage,
+                        "limit": limit,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        return [(_row_to_scene(row), float(row.viewport_coverage_percent or 0.0)) for row in rows]
 
 
 def _is_composite_scene(scene: ProviderSceneRecord) -> bool:
