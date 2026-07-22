@@ -38,7 +38,7 @@ def upgrade() -> None:
         "SELECT index_name, value_domain_min, value_domain_max, display_min, display_max, "
         '\'["#6e3b1f","#b86b2c","#e7c64b","#9bcf53","#3f9f4a","#0b5d37"]\'::jsonb, '
         "nodata_color, 'equal-bands-v1', true, 'contrast', "
-        '\'{"kind":"scene-min-max-equal-bands","breakCount":5}\'::jsonb '
+        "jsonb_build_object('kind', 'scene-min-max-equal-bands', 'breakCount', 5) "
         "FROM akasha.visualization_profiles WHERE is_default "
         "AND lower(index_name) IN ('ndvi','ndmi','ndwi_green_nir','msavi','ndbi','ndre','reci') "
         "ON CONFLICT (index_name, version) DO NOTHING"
