@@ -211,5 +211,32 @@ def test_tile_proxies_png_from_titiler() -> None:
     assert params["colormap_name"] == "rdylgn"
 
 
+def test_titiler_repeats_multi_asset_query_parameters() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["assets"] = request.url.params.get_list("assets")
+        return httpx.Response(200, content=_MOCK_PNG, headers={"content-type": "image/png"})
+
+    titiler = TiTilerTileService(
+        settings=_settings(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    content, content_type = titiler.fetch_tile(
+        collection_id="akasha-sentinel-2-l2a-derived-v1",
+        item_id="s2-rgb-item",
+        z=10,
+        x=732,
+        y=474,
+        assets="red,green,blue",
+        rescale="0,3000",
+    )
+
+    assert content == _MOCK_PNG
+    assert content_type == "image/png"
+    assert captured["assets"] == ["red", "green", "blue"]
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))
