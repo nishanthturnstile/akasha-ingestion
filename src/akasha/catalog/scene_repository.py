@@ -31,6 +31,10 @@ class ProviderSceneRecord:
     coverage_percentage: float | None = None
     file_size_bytes: int | None = None
     raw_object_path: str | None = None
+    processing_state: str = "pending"
+    retry_count: int = 0
+    last_error: str | None = None
+    last_attempt_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -187,6 +191,7 @@ class DatabaseSceneRepository:
                         coverage_percentage,
                         file_size_bytes,
                         raw_object_path
+                        , processing_state, retry_count, last_error, last_attempt_at
                     )
                     VALUES (
                         :provider_adapter,
@@ -213,6 +218,7 @@ class DatabaseSceneRepository:
                         :coverage_percentage,
                         :file_size_bytes,
                         :raw_object_path
+                        , :processing_state, :retry_count, :last_error, :last_attempt_at
                     )
                     ON CONFLICT (provider_adapter, provider_product_id) DO UPDATE
                     SET source_id = EXCLUDED.source_id,
@@ -231,6 +237,10 @@ class DatabaseSceneRepository:
                         coverage_percentage = EXCLUDED.coverage_percentage,
                         file_size_bytes = EXCLUDED.file_size_bytes,
                         raw_object_path = EXCLUDED.raw_object_path,
+                        processing_state = EXCLUDED.processing_state,
+                        retry_count = EXCLUDED.retry_count,
+                        last_error = EXCLUDED.last_error,
+                        last_attempt_at = EXCLUDED.last_attempt_at,
                         updated_at = now()
                     RETURNING *, ST_AsGeoJSON(scene_geometry)::json AS scene_geometry_geojson
                     """
@@ -454,6 +464,10 @@ def _scene_params(scene: ProviderSceneRecord) -> dict[str, Any]:
         "coverage_percentage": scene.coverage_percentage,
         "file_size_bytes": scene.file_size_bytes,
         "raw_object_path": scene.raw_object_path,
+        "processing_state": scene.processing_state,
+        "retry_count": scene.retry_count,
+        "last_error": scene.last_error,
+        "last_attempt_at": scene.last_attempt_at,
     }
 
 
@@ -486,6 +500,10 @@ def _row_to_scene(row: Any) -> ProviderSceneRecord:
         ),
         file_size_bytes=row.file_size_bytes,
         raw_object_path=row.raw_object_path,
+        processing_state=row.get("processing_state", "pending"),
+        retry_count=int(row.get("retry_count", 0) or 0),
+        last_error=row.get("last_error"),
+        last_attempt_at=row.get("last_attempt_at"),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

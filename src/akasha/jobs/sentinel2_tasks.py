@@ -15,6 +15,7 @@ from akasha.runtime import (
     create_raster_repository,
     create_scene_repository,
     create_stage_store,
+    create_sync_ledger_repository,
     create_tile_layer_repository,
 )
 from akasha.schemas import SyncRequest
@@ -32,9 +33,13 @@ def scheduled_bangalore_preload() -> dict[str, str]:
         return {"job_id": "", "status": "active"}
     date_window = _scheduled_date_window(
         settings,
-        latest_processed_date=service.latest_processed_acquisition_date(
-            source_id=settings.sentinel2_preload_source_id,
-            aoi_id=settings.sentinel2_preload_aoi_id,
+        ledger_records=(
+            service._sync_ledger_repository.list_for_source_aoi(
+                source_id=settings.sentinel2_preload_source_id,
+                aoi_id=settings.sentinel2_preload_aoi_id,
+            )
+            if getattr(service, "_sync_ledger_repository", None) is not None
+            else None
         ),
     )
     if date_window is None:
@@ -59,18 +64,33 @@ def _scheduled_date_window(
     *,
     end_date: date | None = None,
     latest_processed_date: date | None = None,
+    ledger_records: list[object] | None = None,
 ) -> tuple[date, date] | None:
-    """Return complete provider days from the outstanding expected pass onward."""
+    """Return a daily seed/overlap range based on the sync ledger, never a scene cursor."""
     resolved_end = end_date or datetime.now(UTC).date() - timedelta(days=1)
-    if latest_processed_date is not None:
-        outstanding_start = latest_processed_date + timedelta(
-            days=settings.sentinel2_revisit_days
+    del latest_processed_date  # retained as a compatibility argument; it is not a cursor.
+    records = ledger_records or []
+    if not records:
+        return (
+            resolved_end - timedelta(days=settings.sentinel2_preload_date_window_days - 1),
+            resolved_end,
         )
-        if outstanding_start > resolved_end:
-            return None
-        return outstanding_start, resolved_end
-    lookback_days = settings.sentinel2_preload_refresh_days - 1
-    return resolved_end - timedelta(days=lookback_days), resolved_end
+    seed_start = resolved_end - timedelta(days=settings.sentinel2_preload_date_window_days - 1)
+    known_dates = {record.provider_date for record in records}
+    missing_dates = [
+        seed_start + timedelta(days=offset)
+        for offset in range(settings.sentinel2_preload_date_window_days)
+        if seed_start + timedelta(days=offset) not in known_dates
+    ]
+    overlap_start = resolved_end - timedelta(days=settings.sentinel2_preload_refresh_days - 1)
+    incomplete_dates = [
+        record.provider_date
+        for record in records
+        if getattr(record, "status", None) != "complete"
+        and record.provider_date <= resolved_end
+    ]
+    start_date = min([overlap_start, *missing_dates, *incomplete_dates])
+    return start_date, resolved_end
 
 
 @celery_app.task(bind=True, name="akasha.jobs.sentinel2_tasks.backfill")
@@ -97,5 +117,6 @@ def _create_service() -> Sentinel2IngestionService:
         backfill_repository=create_backfill_repository(settings, engine),
         pgstac_repository=create_pgstac_repository(settings, engine),
         tile_layer_repository=create_tile_layer_repository(settings, engine),
+        sync_ledger_repository=create_sync_ledger_repository(settings, engine),
         settings=settings,
     )

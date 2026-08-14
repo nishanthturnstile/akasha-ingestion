@@ -12,6 +12,7 @@ from akasha.processing.resourcesat import (
 )
 from akasha.schemas import (
     AnalyticsReadinessResponse,
+    ReadinessAcquisitionDate,
     ReadinessIndexCoverage,
     ReadinessLastSuccessfulJob,
     ReadinessUnavailableReason,
@@ -82,11 +83,13 @@ class ReadinessService:
         job_store,
         scene_repository=None,
         raster_repository=None,
+        sync_ledger_repository=None,
     ) -> None:
         self._settings = settings
         self._job_store = job_store
         self._scene_repository = scene_repository
         self._raster_repository = raster_repository
+        self._sync_ledger_repository = sync_ledger_repository
 
     def readiness(self, *, source_id: str, aoi_id: str) -> AnalyticsReadinessResponse:
         policy = self._policy(source_id)
@@ -211,7 +214,38 @@ class ReadinessService:
             unavailableReasons=reasons,
             reasonCode=primary_reason.code if primary_reason else None,
             reason=primary_reason.message if primary_reason else None,
+            **self._sync_metrics(source_id=source_id, aoi_id=aoi_id),
         )
+
+    def _sync_metrics(self, *, source_id: str, aoi_id: str) -> dict[str, object]:
+        repository = self._sync_ledger_repository
+        if repository is None:
+            return {}
+        heartbeat = repository.heartbeat(source_id=source_id, aoi_id=aoi_id)
+        return {
+            "heartbeatAt": _format_utc(heartbeat) if heartbeat else None,
+            "latestFullySearchedDay": repository.latest_fully_searched_day(
+                source_id=source_id, aoi_id=aoi_id
+            ),
+            "incompleteDayCount": repository.incomplete_count(
+                source_id=source_id, aoi_id=aoi_id
+            ),
+            "processingBacklog": repository.processing_backlog(
+                source_id=source_id, aoi_id=aoi_id
+            ),
+            "lastError": repository.last_error(source_id=source_id, aoi_id=aoi_id),
+            "acquisitionDates": [
+                ReadinessAcquisitionDate(
+                    acquisitionDate=record.provider_date,
+                    sceneCount=record.scene_count,
+                    state=record.status,
+                )
+                for record in repository.list_for_source_aoi(
+                    source_id=source_id, aoi_id=aoi_id
+                )
+                if record.scene_count > 0
+            ],
+        }
 
     def _unavailable(
         self,
@@ -241,6 +275,7 @@ class ReadinessService:
             unavailableReasons=[reason],
             reasonCode=reason.code,
             reason=reason.message,
+            **self._sync_metrics(source_id=source_id, aoi_id=aoi_id),
         )
 
     def _unavailable_reasons(

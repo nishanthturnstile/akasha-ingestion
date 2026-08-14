@@ -36,6 +36,7 @@ from akasha.runtime import (
     create_source_catalog,
     create_source_provider_route_repository,
     create_stage_store,
+    create_sync_ledger_repository,
     create_tile_layer_repository,
     create_titiler_tile_service,
 )
@@ -124,6 +125,7 @@ def create_app(
     asset_repository = create_asset_repository(app_settings, engine)
     raster_repository = create_raster_repository(app_settings, engine)
     backfill_repository = create_backfill_repository(app_settings, engine)
+    sync_ledger_repository = create_sync_ledger_repository(app_settings, engine)
     pgstac_repository = create_pgstac_repository(app_settings, engine)
     tile_layer_repository = create_tile_layer_repository(
         app_settings,
@@ -155,6 +157,7 @@ def create_app(
         backfill_repository=backfill_repository,
         pgstac_repository=pgstac_repository,
         tile_layer_repository=tile_layer_repository,
+        sync_ledger_repository=sync_ledger_repository,
         settings=app_settings,
     )
     resourcesat_service = create_resourcesat_ingestion_service(
@@ -223,6 +226,7 @@ def create_app(
         job_store=store,
         scene_repository=scene_repository,
         raster_repository=raster_repository,
+        sync_ledger_repository=sync_ledger_repository,
         settings=app_settings,
     )
     natural_imagery_service = NaturalImageryService(
@@ -257,6 +261,7 @@ def create_app(
     app.state.asset_repository = asset_repository
     app.state.raster_repository = raster_repository
     app.state.backfill_repository = backfill_repository
+    app.state.sync_ledger_repository = sync_ledger_repository
     app.state.pgstac_repository = pgstac_repository
     app.state.tile_layer_repository = tile_layer_repository
     app.state.field_query_repository = field_query_repository

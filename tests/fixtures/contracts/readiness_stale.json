@@ -30,7 +30,13 @@
       }
     ],
     "reasonCode": "PRELOAD_STALE",
-    "reason": "Latest successful preload is older than the freshness threshold."
+    "reason": "Latest successful preload is older than the freshness threshold.",
+    "heartbeatAt": null,
+    "latestFullySearchedDay": null,
+    "incompleteDayCount": 0,
+    "processingBacklog": 0,
+    "lastError": null,
+    "acquisitionDates": []
   },
   "error": null
 }

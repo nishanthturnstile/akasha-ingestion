@@ -14,7 +14,7 @@ from akasha.processing.resourcesat import RESOURCESAT_SOURCE_COLLECTIONS, RESOUR
 
 T = TypeVar("T")
 FIELD_DATES_MAX_DATES = 64
-FIELD_DATES_MAX_CLOUD_PERCENTAGE = 20.0
+FIELD_DATES_MAX_CLOUD_PERCENTAGE = 70.0
 
 
 class ErrorPayload(BaseModel):
@@ -315,6 +315,14 @@ class FieldDatesRequest(BaseModel):
 
 
 class FieldDateAvailability(BaseModel):
+    status: Literal[
+        "AVAILABLE",
+        "CLOUD_THRESHOLD_EXCEEDED",
+        "INSUFFICIENT_FIELD_COVERAGE",
+        "PROCESSING_PENDING",
+        "PROCESSING_FAILED",
+        "NO_FIELD_INTERSECTION",
+    ] = "PROCESSING_PENDING"
     acquisitionDate: date
     available: bool
     selectedSceneDate: date | None = None
@@ -322,7 +330,7 @@ class FieldDateAvailability(BaseModel):
     cloudPercentage: float | None = Field(
         default=None,
         ge=0,
-        le=FIELD_DATES_MAX_CLOUD_PERCENTAGE,
+        le=100,
     )
     fieldCoveragePercentage: float | None = Field(default=None, ge=0, le=100)
     shadowPercentage: float | None = Field(default=None, ge=0, le=100)
@@ -333,6 +341,8 @@ class FieldDateAvailability(BaseModel):
     @model_validator(mode="after")
     def validate_availability(self) -> Self:
         if self.available:
+            if self.status != "AVAILABLE":
+                self.status = "AVAILABLE"
             if self.selectedSceneDate != self.acquisitionDate:
                 raise ValueError("available field dates must select the exact acquisition date")
             if self.usablePixelPercentage is None or self.validPixelCount <= 0:
@@ -350,18 +360,10 @@ class FieldDateAvailability(BaseModel):
             if self.reason is not None:
                 raise ValueError("available field dates cannot include an unavailable reason")
             return self
-        if self.selectedSceneDate is not None or self.usablePixelPercentage is not None:
-            raise ValueError("unavailable field dates cannot include selected-scene metrics")
-        quality_values = (
-            self.cloudPercentage,
-            self.fieldCoveragePercentage,
-            self.shadowPercentage,
-            self.obscuredPercentage,
-        )
-        if any(value is not None for value in quality_values) or self.validPixelCount != 0:
-            raise ValueError("unavailable field dates cannot include raster metrics")
         if not self.reason or not self.reason.strip():
             raise ValueError("unavailable field dates require a reason")
+        if self.status == "AVAILABLE":
+            raise ValueError("unavailable field dates cannot have AVAILABLE status")
         return self
 
 
@@ -621,6 +623,12 @@ class ReadinessLastSuccessfulJob(BaseModel):
     completedAt: str
 
 
+class ReadinessAcquisitionDate(BaseModel):
+    acquisitionDate: date
+    sceneCount: int = Field(ge=0)
+    state: Literal["running", "complete", "partial", "failed", "retry"]
+
+
 class AnalyticsReadinessResponse(BaseModel):
     status: Literal["AVAILABLE", "STALE", "UNAVAILABLE"]
     sourceId: str
@@ -637,3 +645,9 @@ class AnalyticsReadinessResponse(BaseModel):
     unavailableReasons: list[ReadinessUnavailableReason] = Field(default_factory=list)
     reasonCode: str | None = None
     reason: str | None = None
+    heartbeatAt: str | None = None
+    latestFullySearchedDay: date | None = None
+    incompleteDayCount: int = Field(default=0, ge=0)
+    processingBacklog: int = Field(default=0, ge=0)
+    lastError: str | None = None
+    acquisitionDates: list[ReadinessAcquisitionDate] = Field(default_factory=list)

@@ -30,6 +30,10 @@ from akasha.catalog.source_route_repository import (
     InMemorySourceProviderRouteRepository,
     build_memory_routes,
 )
+from akasha.catalog.sync_ledger_repository import (
+    DatabaseSyncLedgerRepository,
+    InMemorySyncLedgerRepository,
+)
 from akasha.catalog.tile_layer_repository import (
     DatabaseTileLayerRepository,
     InMemoryTileLayerRepository,
@@ -150,6 +154,15 @@ def create_backfill_repository(
     if settings.runtime_backend == RuntimeBackend.MEMORY:
         return InMemoryBackfillRepository()
     return DatabaseBackfillRepository(engine or create_db_engine(settings))
+
+
+def create_sync_ledger_repository(
+    settings: Settings,
+    engine: Engine | None = None,
+) -> InMemorySyncLedgerRepository | DatabaseSyncLedgerRepository:
+    if settings.runtime_backend == RuntimeBackend.MEMORY:
+        return InMemorySyncLedgerRepository()
+    return DatabaseSyncLedgerRepository(engine or create_db_engine(settings))
 
 
 def create_pgstac_repository(

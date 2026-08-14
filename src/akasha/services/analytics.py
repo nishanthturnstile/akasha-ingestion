@@ -306,11 +306,16 @@ class AnalyticsService:
 
         return self._unavailable(
             request,
-            (f"No optical scene with field usable-pixels >= 80% within +/- {window_days} days"),
+            (
+                f"No optical scene with valid field pixels and coverage within +/- "
+                f"{window_days} days"
+            ),
         )
 
     def field_dates(self, request: FieldDatesRequest) -> FieldDatesResponse:
         self._validate_geometry_limits(request)
+        if request.sourceId in {EOS04_SOURCE_ID, NISAR_SOURCE_ID}:
+            raise ValueError("field dates support optical sources only")
         self._validate_source_index(request.sourceId, request.index.lower())
         if not self._has_available_dependencies():
             raise AnalyticsRasterUnavailable(
@@ -351,18 +356,27 @@ class AnalyticsService:
                         shadowPercentage=selected.shadow_percentage,
                         obscuredPercentage=selected.obscured_percentage,
                         validPixelCount=selected.valid_pixels,
+                        status="AVAILABLE",
                     )
                 )
                 continue
-            if raster_failure_count:
-                raise AnalyticsRasterUnavailable(
-                    "Candidate raster outputs are temporarily unavailable."
-                )
+            rejection = self._field_date_rejection(
+                candidate_request,
+                raster_failure_count=raster_failure_count,
+            )
             results.append(
                 FieldDateAvailability(
                     acquisitionDate=acquisition_date,
                     available=False,
-                    reason="No exact-date scene satisfies field quality thresholds.",
+                    status=rejection["status"],
+                    selectedSceneDate=rejection.get("selectedSceneDate"),
+                    usablePixelPercentage=rejection.get("usablePixelPercentage"),
+                    cloudPercentage=rejection.get("cloudPercentage"),
+                    fieldCoveragePercentage=rejection.get("fieldCoveragePercentage"),
+                    shadowPercentage=rejection.get("shadowPercentage"),
+                    obscuredPercentage=rejection.get("obscuredPercentage"),
+                    validPixelCount=int(rejection.get("validPixelCount", 0)),
+                    reason=rejection["reason"],
                 )
             )
 
@@ -371,6 +385,153 @@ class AnalyticsService:
             index=request.index,
             dates=results,
         )
+
+    def _field_date_rejection(
+        self,
+        request: FieldIndexRequest,
+        *,
+        raster_failure_count: int,
+    ) -> dict[str, object]:
+        if raster_failure_count:
+            return {
+                "status": "PROCESSING_FAILED",
+                "reason": "Exact-date scene processing failed while reading field data.",
+            }
+        candidates = self._scene_repository.list_candidates(
+            source_id=request.sourceId,
+            requested_date=request.date,
+            window_days=0,
+            max_cloud_percentage=100,
+            limit=self._settings.max_candidate_scenes,
+        )
+        if not candidates:
+            return {
+                "status": "NO_FIELD_INTERSECTION",
+                "reason": "No exact-date scene intersects the requested field.",
+            }
+        rejections: list[dict[str, object]] = []
+        for scene in candidates:
+            if scene.acquisition_at is None:
+                continue
+            raster = self._raster_repository.get_for_scene_index(
+                scene_id=scene.id or "", index_name=request.index.lower()
+            )
+            if raster is None:
+                rejections.append(
+                    {
+                        "status": "PROCESSING_PENDING",
+                        "selectedSceneDate": scene.acquisition_at.date(),
+                        "reason": "Exact-date scene processing is pending.",
+                    }
+                )
+                continue
+            try:
+                stats, _ = raster_stats(
+                    self._object_store.raster_source(raster.object_path),
+                    geometry=request.geometry,
+                    encoded_nodata=raster.nodata_value,
+                    scale_factor=raster.scale_factor,
+                    threshold_classes=[],
+                )
+                mask_source = self._mask_source(scene, raster)
+                if mask_source is None:
+                    rejections.append(
+                        {
+                            "status": "PROCESSING_PENDING",
+                            "selectedSceneDate": scene.acquisition_at.date(),
+                            "reason": "Exact-date quality mask processing is pending.",
+                        }
+                    )
+                    continue
+                mask_stats = categorical_mask_stats(
+                    mask_source, geometry=request.geometry, **_mask_class_policy(request.sourceId)
+                )
+            except (ObjectStoreNotFoundError, ObjectStoreReadError, RasterioError):
+                rejections.append(
+                    {
+                        "status": "PROCESSING_FAILED",
+                        "selectedSceneDate": scene.acquisition_at.date(),
+                        "reason": "Exact-date scene processing failed while reading field data.",
+                    }
+                )
+                continue
+            valid_pixels = min(
+                int(stats["validPixelCount"] or 0), int(mask_stats["usablePixelCount"] or 0)
+            )
+            metrics = {
+                "selectedSceneDate": scene.acquisition_at.date(),
+                "usablePixelPercentage": min(
+                    float(stats["usablePixelPercentage"] or 0.0),
+                    float(mask_stats["usablePixelPercentage"] or 0.0),
+                ),
+                "cloudPercentage": float(mask_stats["cloudPercentage"] or 0.0),
+                "fieldCoveragePercentage": float(mask_stats["fieldCoveragePercentage"] or 0.0),
+                "shadowPercentage": float(mask_stats["shadowPercentage"] or 0.0),
+                "obscuredPercentage": float(mask_stats["obscuredPercentage"] or 0.0),
+                "validPixelCount": valid_pixels,
+            }
+            if int(mask_stats["fieldPixelCount"] or 0) == 0:
+                rejections.append(
+                    {
+                        **metrics,
+                        "status": "NO_FIELD_INTERSECTION",
+                        "reason": "The field has no raster intersection.",
+                    }
+                )
+                continue
+            if metrics["fieldCoveragePercentage"] < self._settings.field_min_coverage_percentage:
+                rejections.append(
+                    {
+                        **metrics,
+                        "status": "INSUFFICIENT_FIELD_COVERAGE",
+                        "reason": "Field coverage is below the required threshold.",
+                    }
+                )
+                continue
+            if metrics["obscuredPercentage"] > request.maxCloudPercentage:
+                rejections.append(
+                    {
+                        **metrics,
+                        "status": "CLOUD_THRESHOLD_EXCEEDED",
+                        "reason": (
+                            f"{metrics['obscuredPercentage']:.1f}% field cloud, cirrus, and "
+                            f"shadow coverage exceeds your {request.maxCloudPercentage:g}% limit."
+                        ),
+                    }
+                )
+                continue
+            if valid_pixels < self._settings.field_min_usable_pixels:
+                rejections.append(
+                    {
+                        **metrics,
+                        "status": "PROCESSING_FAILED",
+                        "reason": "No valid field pixels are available.",
+                    }
+                )
+        if rejections:
+            # An AOI search can return several adjacent Sentinel-2 tiles for the
+            # same date.  Prefer the rejection from the tile that actually
+            # covers the field; otherwise an unrelated edge tile can hide a
+            # useful CLOUD_THRESHOLD_EXCEEDED explanation.
+            priority = {
+                "CLOUD_THRESHOLD_EXCEEDED": 0,
+                "PROCESSING_FAILED": 1,
+                "PROCESSING_PENDING": 2,
+                "INSUFFICIENT_FIELD_COVERAGE": 3,
+                "NO_FIELD_INTERSECTION": 4,
+            }
+            return min(
+                rejections,
+                key=lambda item: (
+                    priority.get(str(item.get("status")), 99),
+                    -float(item.get("fieldCoveragePercentage") or 0.0),
+                    -int(item.get("validPixelCount") or 0),
+                ),
+            )
+        return {
+            "status": "PROCESSING_PENDING",
+            "reason": "Exact-date scene processing is pending.",
+        }
 
     def field_sar(self, request: FieldSarRequest) -> FieldSarResponse:
         """Resolve calibrated SAR evidence for one exact field geometry."""
@@ -776,10 +937,7 @@ class AnalyticsService:
     ) -> tuple[list[_FieldIndexCandidate], int]:
         source_id = request.sourceId
         index_name = request.index.lower()
-        max_cloud_percentage = min(
-            request.maxCloudPercentage,
-            self._settings.field_max_cloud_percentage,
-        )
+        max_cloud_percentage = request.maxCloudPercentage
         candidates = sorted(
             self._scene_repository.list_candidates(
                 source_id=source_id,
@@ -857,9 +1015,10 @@ class AnalyticsService:
                 continue
             if field_coverage < self._settings.field_min_coverage_percentage:
                 continue
-            if usable_percentage / 100 < self._settings.field_usable_pixel_threshold:
-                continue
-            if obscured_percentage >= max_cloud_percentage:
+            # Usable percentage remains a reported quality metric.  Eligibility
+            # requires valid pixels and field coverage, but no longer applies a
+            # hidden fixed 80% veto.
+            if obscured_percentage > max_cloud_percentage:
                 continue
             options.append(
                 _FieldIndexCandidate(

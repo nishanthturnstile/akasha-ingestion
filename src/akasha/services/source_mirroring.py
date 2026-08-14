@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import sleep
 from typing import Any
 
 import httpx
@@ -109,18 +110,32 @@ class SourceMirroringService:
         max_bytes = self._settings.source_mirror_max_bytes_per_run
         digest = sha256()
         size_bytes = 0
-        with self._client.stream("GET", download_href or asset.href) as response:
-            response.raise_for_status()
-            with file_path.open("wb") as file:
-                for chunk in response.iter_bytes(chunk_size=1024 * 1024):
-                    if not chunk:
-                        continue
-                    size_bytes += len(chunk)
-                    if max_bytes is not None and size_bytes > max_bytes:
-                        raise ValueError("source mirror byte limit exceeded")
-                    digest.update(chunk)
-                    file.write(chunk)
-        return digest.hexdigest(), size_bytes
+        for attempt in range(self._settings.provider_retry_attempts):
+            digest = sha256()
+            size_bytes = 0
+            try:
+                with self._client.stream("GET", download_href or asset.href) as response:
+                    response.raise_for_status()
+                    with file_path.open("wb") as file:
+                        for chunk in response.iter_bytes(chunk_size=1024 * 1024):
+                            if not chunk:
+                                continue
+                            size_bytes += len(chunk)
+                            if max_bytes is not None and size_bytes > max_bytes:
+                                raise ValueError("source mirror byte limit exceeded")
+                            digest.update(chunk)
+                            file.write(chunk)
+                return digest.hexdigest(), size_bytes
+            except httpx.HTTPStatusError as exc:
+                retryable = exc.response.status_code == 429 or exc.response.status_code >= 500
+                if not retryable or attempt + 1 >= self._settings.provider_retry_attempts:
+                    raise
+                sleep(self._settings.provider_retry_backoff_seconds * (2**attempt))
+            except (httpx.TimeoutException, httpx.NetworkError):
+                if attempt + 1 >= self._settings.provider_retry_attempts:
+                    raise
+                sleep(self._settings.provider_retry_backoff_seconds * (2**attempt))
+        raise AssertionError("unreachable source mirror retry state")
 
 
 def _mirror_metadata(

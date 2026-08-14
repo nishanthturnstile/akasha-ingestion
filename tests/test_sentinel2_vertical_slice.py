@@ -109,6 +109,7 @@ def test_offline_sentinel2_vertical_slice_returns_available_and_signed_urls(tmp_
         aoi_id="bangalore_60km_geodesic_aoi",
     )[0]
     published_scene.pgstac_item_id = None
+    published_scene.processing_state = "pending"
     scene_repository.upsert(published_scene)
     pgstac_repository.items.clear()
 
@@ -131,10 +132,12 @@ def test_offline_sentinel2_vertical_slice_returns_available_and_signed_urls(tmp_
     assert duplicate_summary["processed_count"] == 0
     assert duplicate_summary["skipped_count"] == 1
     assert len(pgstac_repository.items) == 1
-    assert scene_repository.list_for_source_aoi(
+    repaired_scene = scene_repository.list_for_source_aoi(
         source_id="sentinel-2-l2a",
         aoi_id="bangalore_60km_geodesic_aoi",
-    )[0].pgstac_item_id is not None
+    )[0]
+    assert repaired_scene.pgstac_item_id is not None
+    assert repaired_scene.processing_state == "complete"
 
     provider._item = replace(
         _item(),
@@ -315,8 +318,11 @@ class _Provider:
         self._item = item
 
     def search(self, request: ProviderSearchRequest) -> list[NormalizedStacItem]:
-        del request
-        return [self._item]
+        if self._item.acquisition_at is None:
+            return []
+        if request.date_start <= self._item.acquisition_at.date() <= request.date_end:
+            return [self._item]
+        return []
 
 
 class _AoiRepository:

@@ -30,7 +30,13 @@
       }
     ],
     "reasonCode": "MISSING_INDEX_COVERAGE",
-    "reason": "Precomputed outputs exist, but NDVI coverage is missing."
+    "reason": "Precomputed outputs exist, but NDVI coverage is missing.",
+    "heartbeatAt": null,
+    "latestFullySearchedDay": null,
+    "incompleteDayCount": 0,
+    "processingBacklog": 0,
+    "lastError": null,
+    "acquisitionDates": []
   },
   "error": null
 }

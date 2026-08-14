@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     earthsearch_api_url: str = "https://earth-search.aws.element84.com/v1"
     earthsearch_timeout_seconds: float = Field(default=30.0, gt=0)
     earthsearch_page_size: int = Field(default=100, gt=0, le=1000)
+    provider_retry_attempts: int = Field(default=3, ge=1, le=8)
+    provider_retry_backoff_seconds: float = Field(default=0.5, ge=0, le=60)
 
     planetary_computer_api_url: str = "https://planetarycomputer.microsoft.com/api/stac/v1"
     planetary_computer_sas_url: str = "https://planetarycomputer.microsoft.com/api/sas/v1"
@@ -196,7 +198,7 @@ class Settings(BaseSettings):
     field_query_ttl_seconds: int = Field(default=86_400, ge=300, le=604_800)
     backfill_search_item_cap: int = Field(default=1000, gt=0)
     field_usable_pixel_threshold: float = Field(default=0.80, ge=0, le=1)
-    field_max_cloud_percentage: float = Field(default=20.0, ge=0, le=20)
+    field_max_cloud_percentage: float = Field(default=20.0, ge=0, le=70)
     field_min_coverage_percentage: float = Field(default=95.0, ge=0, le=100)
 
     sentinel2_profile_version: str = "sentinel2-l2a-earthsearch-v1"

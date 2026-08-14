@@ -23,13 +23,13 @@ def _settings() -> Settings:
     )
 
 
-def test_scheduled_date_window_uses_refresh_window_not_bootstrap_window() -> None:
+def test_scheduled_date_window_seeds_the_180_day_missing_day_window() -> None:
     start_date, end_date = sentinel2_tasks._scheduled_date_window(
         _settings(),
         end_date=date(2026, 7, 13),
     )
 
-    assert start_date == date(2026, 7, 7)
+    assert start_date == date(2026, 1, 15)
     assert end_date == date(2026, 7, 13)
 
 
@@ -43,7 +43,7 @@ def test_scheduled_date_window_excludes_incomplete_current_day(monkeypatch) -> N
 
     start_date, end_date = sentinel2_tasks._scheduled_date_window(_settings())
 
-    assert start_date == date(2026, 7, 6)
+    assert start_date == date(2026, 1, 14)
     assert end_date == date(2026, 7, 12)
 
 
@@ -57,11 +57,11 @@ def test_consecutive_daily_checks_shift_the_bounded_window() -> None:
         end_date=date(2026, 7, 14),
     )
 
-    assert first == (date(2026, 7, 7), date(2026, 7, 13))
-    assert second == (date(2026, 7, 8), date(2026, 7, 14))
+    assert first == (date(2026, 1, 15), date(2026, 7, 13))
+    assert second == (date(2026, 1, 16), date(2026, 7, 14))
 
 
-def test_outstanding_expected_pass_remains_in_window_until_data_arrives() -> None:
+def test_latest_scene_cursor_does_not_control_continuous_window() -> None:
     first = sentinel2_tasks._scheduled_date_window(
         _settings(),
         end_date=date(2026, 7, 13),
@@ -73,16 +73,16 @@ def test_outstanding_expected_pass_remains_in_window_until_data_arrives() -> Non
         latest_processed_date=date(2026, 6, 28),
     )
 
-    assert first == (date(2026, 7, 3), date(2026, 7, 13))
-    assert later == (date(2026, 7, 3), date(2026, 7, 20))
+    assert first == (date(2026, 1, 15), date(2026, 7, 13))
+    assert later == (date(2026, 1, 22), date(2026, 7, 20))
 
 
-def test_daily_check_is_not_due_before_next_expected_pass_is_complete() -> None:
+def test_daily_check_still_searches_previous_utc_day_without_a_cursor() -> None:
     assert sentinel2_tasks._scheduled_date_window(
         _settings(),
         end_date=date(2026, 7, 2),
         latest_processed_date=date(2026, 6, 28),
-    ) is None
+    ) == (date(2026, 1, 4), date(2026, 7, 2))
 
 
 def test_scheduled_preload_submits_bounded_full_pipeline_request(monkeypatch) -> None:
@@ -182,8 +182,8 @@ def test_no_result_daily_checks_retry_shifted_window_with_cloud_cap() -> None:
     assert first.result_metadata["backfill_summary"]["searched_count"] == 0
     assert second.result_metadata["backfill_summary"]["searched_count"] == 0
     assert [(request.date_start, request.date_end) for request in provider.requests] == [
-        (date(2026, 7, 7), date(2026, 7, 13)),
-        (date(2026, 7, 8), date(2026, 7, 14)),
+        *((day, day) for day in [date(2026, 7, offset) for offset in range(7, 14)]),
+        *((day, day) for day in [date(2026, 7, offset) for offset in range(8, 15)]),
     ]
     assert all(request.max_cloud_percentage is None for request in provider.requests)
 

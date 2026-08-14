@@ -39,6 +39,21 @@ class ProviderSearchRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderSearchResult:
+    """A paginated search plus an explicit completeness signal.
+
+    Providers historically returned a bare list.  Keeping ``search`` compatible while
+    exposing this result lets ingestion distinguish an empty day from a safety-cap
+    truncation.
+    """
+
+    items: list[NormalizedStacItem]
+    exhausted: bool = True
+    pages: int = 0
+    truncated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class NormalizedAsset:
     asset_key: str
     href: str
