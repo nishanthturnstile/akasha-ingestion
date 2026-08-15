@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from time import sleep
 from typing import Any
 
 import httpx
@@ -12,6 +13,7 @@ from akasha.providers.contracts import (
     ProviderDataError,
     ProviderErrorCategory,
     ProviderSearchRequest,
+    ProviderSearchResult,
 )
 
 
@@ -23,12 +25,16 @@ class EarthSearchProvider:
         settings: Settings,
         *,
         client: httpx.Client | None = None,
+        sleep_fn=sleep,
     ) -> None:
         self._api_url = settings.earthsearch_api_url.rstrip("/")
         self._timeout = settings.earthsearch_timeout_seconds
         self._page_size = settings.earthsearch_page_size
         self._client = client or httpx.Client(timeout=self._timeout)
         self._owns_client = client is None
+        self._retry_attempts = settings.provider_retry_attempts
+        self._retry_backoff_seconds = settings.provider_retry_backoff_seconds
+        self._sleep = sleep_fn
 
     def close(self) -> None:
         if self._owns_client:
@@ -41,6 +47,9 @@ class EarthSearchProvider:
         return payload.get("stac_version") is not None and collections_link is not None
 
     def search(self, request: ProviderSearchRequest) -> list[NormalizedStacItem]:
+        return self.search_with_status(request).items
+
+    def search_with_status(self, request: ProviderSearchRequest) -> ProviderSearchResult:
         if request.intersects is None and request.bbox is None:
             raise ValueError("Earth Search requests require intersects geometry or bbox")
 
@@ -58,9 +67,12 @@ class EarthSearchProvider:
             payload["query"] = {"eo:cloud_cover": {"lte": request.max_cloud_percentage}}
 
         items: list[NormalizedStacItem] = []
+        pages = 0
         response_payload = self._post_search(payload)
         while True:
-            for raw_item in response_payload.get("features", []):
+            pages += 1
+            features = response_payload.get("features", [])
+            for feature_index, raw_item in enumerate(features):
                 item = self.normalize_item(
                     raw_item,
                     source_id=request.source_id,
@@ -69,11 +81,18 @@ class EarthSearchProvider:
                 )
                 items.append(item)
                 if request.max_items is not None and len(items) >= request.max_items:
-                    return items
+                    next_link = _find_link(response_payload.get("links", []), "next")
+                    truncated = feature_index + 1 < len(features) or next_link is not None
+                    return ProviderSearchResult(
+                        items=items[: request.max_items],
+                        exhausted=not truncated,
+                        pages=pages,
+                        truncated=truncated,
+                    )
 
             next_link = _find_link(response_payload.get("links", []), "next")
             if next_link is None:
-                return items
+                return ProviderSearchResult(items=items, pages=pages)
             response_payload = self._request_next(next_link)
 
     def normalize_item(
@@ -159,22 +178,37 @@ class EarthSearchProvider:
         return _dict(response.json())
 
     def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        try:
-            response = self._client.request(method, url, timeout=self._timeout, **kwargs)
-            response.raise_for_status()
-            return response
-        except httpx.HTTPStatusError as exc:
-            raise _provider_error_from_response(exc.response) from exc
-        except httpx.TimeoutException as exc:
-            raise ProviderDataError(
+        last_exception: BaseException | None = None
+        for attempt in range(self._retry_attempts):
+            try:
+                response = self._client.request(method, url, timeout=self._timeout, **kwargs)
+                response.raise_for_status()
+                return response
+            except httpx.HTTPStatusError as exc:
+                last_exception = exc
+                error = _provider_error_from_response(exc.response)
+            except httpx.TimeoutException as exc:
+                last_exception = exc
+                error = ProviderDataError(
+                    ProviderErrorCategory.PROVIDER_SLA_UNAVAILABLE,
+                    f"Earth Search request timed out: {url}",
+                )
+            except httpx.NetworkError as exc:
+                last_exception = exc
+                error = ProviderDataError(
+                    ProviderErrorCategory.PROVIDER_SLA_UNAVAILABLE,
+                    f"Earth Search network error: {url}",
+                )
+            retryable = error.category in {
+                ProviderErrorCategory.SOURCE_RATE_LIMITED,
                 ProviderErrorCategory.PROVIDER_SLA_UNAVAILABLE,
-                f"Earth Search request timed out: {url}",
-            ) from exc
-        except httpx.NetworkError as exc:
-            raise ProviderDataError(
-                ProviderErrorCategory.PROVIDER_SLA_UNAVAILABLE,
-                f"Earth Search network error: {url}",
-            ) from exc
+            }
+            if not retryable or attempt + 1 >= self._retry_attempts:
+                if last_exception is not None:
+                    raise error from last_exception
+                raise error
+            self._sleep(self._retry_backoff_seconds * (2**attempt))
+        raise AssertionError("unreachable provider retry state")
 
 
 def _provider_error_from_response(response: httpx.Response) -> ProviderDataError:

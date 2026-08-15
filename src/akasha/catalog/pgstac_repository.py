@@ -53,9 +53,7 @@ EO_EXTENSION = "https://stac-extensions.github.io/eo/v2.0.0/schema.json"
 RASTER_EXTENSION = "https://stac-extensions.github.io/raster/v2.0.0/schema.json"
 PROJECTION_EXTENSION = "https://stac-extensions.github.io/projection/v2.0.0/schema.json"
 SAR_EXTENSION = "https://stac-extensions.github.io/sar/v1.3.0/schema.json"
-CLASSIFICATION_EXTENSION = (
-    "https://stac-extensions.github.io/classification/v2.0.0/schema.json"
-)
+CLASSIFICATION_EXTENSION = "https://stac-extensions.github.io/classification/v2.0.0/schema.json"
 DERIVED_STAC_EXTENSIONS = (
     EO_EXTENSION,
     RASTER_EXTENSION,
@@ -147,6 +145,8 @@ def build_derived_item(
     outputs: list[RasterOutputRecord],
     bbox: list[float],
     geometry: dict[str, Any],
+    source_assets: list[SceneAssetRecord] | None = None,
+    mirror_bucket: str | None = None,
 ) -> pystac.Item:
     if scene.source_id in RESOURCESAT_SOURCE_IDS:
         return build_resourcesat_derived_item(
@@ -181,6 +181,22 @@ def build_derived_item(
                     "akasha:formula_version": output.formula_version,
                     "akasha:processing_profile_version": output.processing_profile_version,
                 },
+            ),
+        )
+    for asset in source_assets or []:
+        if (
+            asset.asset_key not in {"red", "green", "blue"}
+            or asset.mirror_status != "mirrored"
+            or not asset.mirror_object_path
+            or not mirror_bucket
+        ):
+            continue
+        item.add_asset(
+            asset.asset_key,
+            pystac.Asset(
+                href=f"s3://{mirror_bucket}/{asset.mirror_object_path}",
+                media_type=pystac.MediaType.COG,
+                roles=["data", "reflectance"],
             ),
         )
     return item
@@ -352,9 +368,7 @@ def build_nisar_backscatter_item(
             "sar:frequency_band": "S",
             "sar:instrument_mode": "GCOV",
             "sar:polarizations": polarizations,
-            "sat:orbit_state": str(
-                identification.get("orbit_pass_direction") or ""
-            ).lower()
+            "sat:orbit_state": str(identification.get("orbit_pass_direction") or "").lower()
             or None,
             "sat:absolute_orbit": identification.get("absolute_orbit_number"),
             "akasha:track_number": identification.get("track_number"),
@@ -539,8 +553,7 @@ def _resourcesat_collection(profile: ResourceSatProfile) -> dict[str, Any]:
         "stac_extensions": list(DERIVED_STAC_EXTENSIONS),
         "id": profile.pgstac_collection,
         "title": (
-            f"Akasha ResourceSat-2A {profile.instrument} "
-            f"{profile.analysis_level} derived indices"
+            f"Akasha ResourceSat-2A {profile.instrument} {profile.analysis_level} derived indices"
         ),
         "description": (
             f"Akasha ResourceSat-2A {profile.instrument} {profile.analysis_level} "

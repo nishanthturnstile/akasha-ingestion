@@ -25,7 +25,13 @@
     },
     "unavailableReasons": [],
     "reasonCode": null,
-    "reason": null
+    "reason": null,
+    "heartbeatAt": null,
+    "latestFullySearchedDay": null,
+    "incompleteDayCount": 0,
+    "processingBacklog": 0,
+    "lastError": null,
+    "acquisitionDates": []
   },
   "error": null
 }

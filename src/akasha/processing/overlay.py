@@ -59,10 +59,7 @@ def _transparent_png() -> bytes:
     ihdr = struct.pack("!IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
     idat = zlib.compress(b"\x00\x00\x00\x00\x00")
     return (
-        signature
-        + _png_chunk(b"IHDR", ihdr)
-        + _png_chunk(b"IDAT", idat)
-        + _png_chunk(b"IEND", b"")
+        signature + _png_chunk(b"IHDR", ihdr) + _png_chunk(b"IDAT", idat) + _png_chunk(b"IEND", b"")
     )
 
 
@@ -84,10 +81,7 @@ def _rgba_png(width: int, height: int, rgba: bytes) -> bytes:
         scanlines.extend(rgba[start : start + stride])
     idat = zlib.compress(bytes(scanlines))
     return (
-        signature
-        + _png_chunk(b"IHDR", ihdr)
-        + _png_chunk(b"IDAT", idat)
-        + _png_chunk(b"IEND", b"")
+        signature + _png_chunk(b"IHDR", ihdr) + _png_chunk(b"IDAT", idat) + _png_chunk(b"IEND", b"")
     )
 
 
@@ -127,6 +121,8 @@ def render_clipped_index_overlay(
     max_dim: int = _DEFAULT_MAX_DIM,
     band_index: int = 1,
     display_range: tuple[float, float] | None = None,
+    thresholds: tuple[float, ...] = (),
+    palette: tuple[str, ...] = (),
 ) -> tuple[bytes, list[list[float]] | None]:
     """Render a polygon-clipped, Web-Mercator index overlay PNG.
 
@@ -228,7 +224,14 @@ def render_clipped_index_overlay(
     rgba = np.zeros((out_h, out_w, 4), dtype=np.uint8)
     valid_b = poly & (out_valid >= 0.5) & np.isfinite(out_index)
     if np.any(valid_b):
-        if display_range is None:
+        if thresholds and len(thresholds) == 5 and len(palette) == 6:
+            colors = np.asarray(
+                [tuple(int(value[i : i + 2], 16) for i in (1, 3, 5)) for value in palette],
+                dtype=np.uint8,
+            )
+            bins = np.digitize(out_index, np.asarray(thresholds), right=False)
+            rgb = colors[np.clip(bins, 0, len(colors) - 1)]
+        elif display_range is None:
             rgb = _ndvi_palette(out_index)
         else:
             low, high = display_range

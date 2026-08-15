@@ -71,13 +71,17 @@ class TiTilerTileService:
             f"/tiles/WebMercatorQuad/{z}/{x}/{y}.png"
         )
         url = f"{self._settings.titiler_internal_url.rstrip('/')}{path}"
-        params: dict[str, str] = {"assets": assets}
+        # TiTiler models ``assets`` as a repeated query parameter. A comma-delimited
+        # value is treated as one literal asset name, which breaks RGB rendering.
+        params: list[tuple[str, str]] = [
+            ("assets", asset.strip()) for asset in assets.split(",") if asset.strip()
+        ]
         if asset_bidx:
-            params["asset_bidx"] = asset_bidx
+            params.append(("asset_bidx", asset_bidx))
         if rescale:
-            params["rescale"] = rescale
+            params.append(("rescale", rescale))
         if colormap_name:
-            params["colormap_name"] = colormap_name
+            params.append(("colormap_name", colormap_name))
 
         try:
             response = self._client.get(url, params=params)

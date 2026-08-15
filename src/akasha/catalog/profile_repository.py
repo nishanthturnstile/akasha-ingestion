@@ -19,6 +19,8 @@ class VisualizationProfile:
     nodata_color: str
     version: str
     is_default: bool
+    render_profile: str = "standard"
+    algorithm_config: dict[str, Any] | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -55,7 +57,9 @@ class InMemoryProfileRepository:
             (
                 profile
                 for profile in self._visualization_profiles
-                if profile.index_name == normalized and profile.is_default
+                if profile.index_name == normalized
+                and profile.is_default
+                and profile.render_profile == "standard"
             ),
             None,
         )
@@ -88,19 +92,24 @@ class DatabaseProfileRepository:
 
     def get_default_visualization(self, index_name: str) -> VisualizationProfile | None:
         with self._engine.connect() as connection:
-            row = connection.execute(
-                text(
-                    """
+            row = (
+                connection.execute(
+                    text(
+                        """
                     SELECT *
                     FROM akasha.visualization_profiles
                     WHERE index_name = :index_name
                       AND is_default = true
+                      AND render_profile = 'standard'
                     ORDER BY created_at DESC
                     LIMIT 1
                     """
-                ),
-                {"index_name": index_name.lower()},
-            ).mappings().first()
+                    ),
+                    {"index_name": index_name.lower()},
+                )
+                .mappings()
+                .first()
+            )
         return _row_to_visualization(row) if row else None
 
     def get_default_threshold(
@@ -110,9 +119,10 @@ class DatabaseProfileRepository:
         source_id: str | None = None,
     ) -> ThresholdProfile | None:
         with self._engine.connect() as connection:
-            row = connection.execute(
-                text(
-                    """
+            row = (
+                connection.execute(
+                    text(
+                        """
                     SELECT *
                     FROM akasha.threshold_profiles
                     WHERE index_name = :index_name
@@ -121,9 +131,12 @@ class DatabaseProfileRepository:
                     ORDER BY (source_id = :source_id) DESC NULLS LAST, created_at DESC
                     LIMIT 1
                     """
-                ),
-                {"index_name": index_name.lower(), "source_id": source_id},
-            ).mappings().first()
+                    ),
+                    {"index_name": index_name.lower(), "source_id": source_id},
+                )
+                .mappings()
+                .first()
+            )
         return _row_to_threshold(row) if row else None
 
 
@@ -143,6 +156,8 @@ def build_memory_profiles(
             nodata_color=str(profile["nodata_color"]),
             version=str(profile["version"]),
             is_default=bool(profile["is_default"]),
+            render_profile=str(profile.get("render_profile", "standard")),
+            algorithm_config=dict(profile.get("algorithm_config") or {}),
         )
         for profile in visualization_dicts
     ]
@@ -176,6 +191,8 @@ def _row_to_visualization(row: Any) -> VisualizationProfile:
         nodata_color=row.nodata_color,
         version=row.version,
         is_default=row.is_default,
+        render_profile=row.render_profile,
+        algorithm_config=dict(row.algorithm_config or {}),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

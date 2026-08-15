@@ -36,6 +36,7 @@ from akasha.runtime import (
     create_source_catalog,
     create_source_provider_route_repository,
     create_stage_store,
+    create_sync_ledger_repository,
     create_tile_layer_repository,
     create_titiler_tile_service,
 )
@@ -52,6 +53,8 @@ from akasha.schemas import (
     FieldSarResponse,
     HealthResponse,
     JobResponse,
+    LatestImageryResult,
+    LatestImagerySearch,
     SourceDatesResponse,
     SourceResponse,
     SyncRequest,
@@ -122,6 +125,7 @@ def create_app(
     asset_repository = create_asset_repository(app_settings, engine)
     raster_repository = create_raster_repository(app_settings, engine)
     backfill_repository = create_backfill_repository(app_settings, engine)
+    sync_ledger_repository = create_sync_ledger_repository(app_settings, engine)
     pgstac_repository = create_pgstac_repository(app_settings, engine)
     tile_layer_repository = create_tile_layer_repository(
         app_settings,
@@ -153,6 +157,7 @@ def create_app(
         backfill_repository=backfill_repository,
         pgstac_repository=pgstac_repository,
         tile_layer_repository=tile_layer_repository,
+        sync_ledger_repository=sync_ledger_repository,
         settings=app_settings,
     )
     resourcesat_service = create_resourcesat_ingestion_service(
@@ -221,6 +226,7 @@ def create_app(
         job_store=store,
         scene_repository=scene_repository,
         raster_repository=raster_repository,
+        sync_ledger_repository=sync_ledger_repository,
         settings=app_settings,
     )
     natural_imagery_service = NaturalImageryService(
@@ -255,6 +261,7 @@ def create_app(
     app.state.asset_repository = asset_repository
     app.state.raster_repository = raster_repository
     app.state.backfill_repository = backfill_repository
+    app.state.sync_ledger_repository = sync_ledger_repository
     app.state.pgstac_repository = pgstac_repository
     app.state.tile_layer_repository = tile_layer_repository
     app.state.field_query_repository = field_query_repository
@@ -392,6 +399,59 @@ def create_app(
         return Response(content=content, media_type=media_type)
 
     @app.post(
+        "/api/v1/imagery/search",
+        response_model=APIResponse[LatestImageryResult],
+        dependencies=[auth_dependency],
+        responses=API_ERROR_RESPONSES | VALIDATION_ERROR_RESPONSE,
+    )
+    def latest_imagery_search(
+        request: Request,
+        payload: LatestImagerySearch,
+    ) -> APIResponse[LatestImageryResult]:
+        service_obj: NaturalImageryService = request.app.state.natural_imagery_service
+        return APIResponse(success=True, data=service_obj.search(payload))
+
+    @app.get(
+        "/api/v1/imagery/scenes/{scene_id}/tiles/{z}/{x}/{y}.png",
+        dependencies=[auth_dependency],
+        responses=API_ERROR_RESPONSES | NOT_FOUND_ERROR_RESPONSE,
+    )
+    def latest_imagery_tile(
+        request: Request,
+        scene_id: str,
+        z: int,
+        x: int,
+        y: int,
+    ) -> Response:
+        service_obj: NaturalImageryService = request.app.state.natural_imagery_service
+        try:
+            content, media_type = service_obj.scene_tile(scene_id=scene_id, z=z, x=x, y=y)
+        except NaturalImageryNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except NaturalImageryUnavailable as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except TiTilerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return Response(content=content, media_type=media_type)
+
+    @app.get(
+        "/api/v1/imagery/scenes/{scene_id}/thumbnail.png",
+        dependencies=[auth_dependency],
+        responses=API_ERROR_RESPONSES | NOT_FOUND_ERROR_RESPONSE,
+    )
+    def latest_imagery_thumbnail(request: Request, scene_id: str) -> Response:
+        service_obj: NaturalImageryService = request.app.state.natural_imagery_service
+        try:
+            content, media_type = service_obj.scene_thumbnail(scene_id=scene_id)
+        except NaturalImageryNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except NaturalImageryUnavailable as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except TiTilerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return Response(content=content, media_type=media_type)
+
+    @app.post(
         "/api/v1/ingestion/sync",
         response_model=APIResponse[JobResponse],
         status_code=status.HTTP_202_ACCEPTED,
@@ -410,14 +470,10 @@ def create_app(
             )
             job = resourcesat_service_obj.start_backfill(payload)
         elif payload.job_type == "eos04_backfill":
-            eos04_service_obj: Eos04IngestionService = (
-                request.app.state.eos04_ingestion_service
-            )
+            eos04_service_obj: Eos04IngestionService = request.app.state.eos04_ingestion_service
             job = eos04_service_obj.start_backfill(payload)
         elif payload.job_type == "nisar_backfill":
-            nisar_service_obj: NisarIngestionService = (
-                request.app.state.nisar_ingestion_service
-            )
+            nisar_service_obj: NisarIngestionService = request.app.state.nisar_ingestion_service
             job = nisar_service_obj.start_backfill(payload)
         elif payload.job_type == "landsat_backfill":
             landsat_service_obj: LandsatIngestionService = (

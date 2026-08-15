@@ -16,16 +16,16 @@ what/why, and [docs/architecture-technical-stack.md](docs/architecture-technical
 
 This repository is commonly opened in the saved VS Code workspace
 [`../akasha-workspace.code-workspace`](../akasha-workspace.code-workspace) alongside
-[`../akasha-em-git`](../akasha-em-git), the Akasha Ghat EM farm-management application.
+[`../akasha-project`](../akasha-project), the Akasha product application.
 
 When an agent is asked to compare, reuse, or align patterns across Akasha projects:
 
-- First read this file and [`../akasha-em-git/AGENTS.md`](../akasha-em-git/AGENTS.md); each repo
+- First read this file and [`../akasha-project/AGENTS.md`](../akasha-project/AGENTS.md); each repo
   has different ownership boundaries and runtime assumptions.
 - Treat this repo as the **standalone ingestion/catalog/processing backend** reference: FastAPI,
   Celery, Postgres/PostGIS/pgSTAC, MinIO, provider adapters, object storage, processing, jobs, and
   operational runbooks.
-- Treat `../akasha-em-git` as the **application/product** reference: BFF + frontend + farm-management
+- Treat `../akasha-project` as the **application/product** reference: BFF + frontend + farm-management
   workflows, UI patterns, field/season/operation concepts, and ResourceSat product integration.
 - Do not copy code blindly between roots. Prefer copying concepts and adapting them to this repo's
   conventions: `AKASHA_` settings, `APIResponse[T]`, manual app-state dependency wiring,
@@ -44,7 +44,7 @@ As of the UI↔pipeline integration work, Akasha is moving to a **two-VM split**
   (4 vCPU, ~16 GiB RAM) with a 256 GiB OS disk and a 512 GiB `/srv/akasha` data disk. This is
   acceptable for bounded MVP ingestion/backfill/composite jobs, but scale up before concurrent heavy
   processing or larger AOIs.
-- **`akasha-control`** — Coolify control/public-app VM. The product app (`../akasha-em-git`) should
+- **`akasha-control`** — Coolify control/public-app VM. The product app (`../akasha-project`) should
   move there and call this ingestion service server-to-server. Current observed size: Azure
   `Standard_D4s_v4` (4 vCPU, ~16 GiB RAM) with a 64 GiB OS disk and 256 GiB `/data`; acceptable for
   Coolify + the product app MVP when bulk raster data stays on `akasha-staging`.

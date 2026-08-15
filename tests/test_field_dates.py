@@ -17,7 +17,7 @@ from akasha.catalog.tile_layer_repository import InMemoryTileLayerRepository
 from akasha.config import Environment, RuntimeBackend, Settings
 from akasha.schemas import FieldDateAvailability, FieldDatesRequest, FieldIndexRequest
 from akasha.security import hash_api_key
-from akasha.services.analytics import AnalyticsRasterUnavailable, AnalyticsService
+from akasha.services.analytics import AnalyticsService
 from akasha.storage.object_store import InMemoryObjectStore
 
 _FIELD_GEOMETRY = {
@@ -58,15 +58,16 @@ def _mask_cog(value: int | np.ndarray) -> bytes:
         if isinstance(value, int)
         else np.asarray(value, dtype="uint8")
     )
+    height, width = data.shape
     with MemoryFile() as memory:
         with memory.open(
             driver="GTiff",
-            height=4,
-            width=4,
+            height=height,
+            width=width,
             count=1,
             dtype="uint8",
             crs="EPSG:4326",
-            transform=from_bounds(77.600, 12.950, 77.640, 12.990, 4, 4),
+            transform=from_bounds(77.600, 12.950, 77.640, 12.990, width, height),
             nodata=0,
         ) as dataset:
             dataset.write(data, 1)
@@ -221,12 +222,11 @@ def test_field_dates_treat_cloud_and_shadow_as_obscured_pixels() -> None:
     assert result.dates[0].available is False
 
 
-def test_field_dates_rejects_cloud_limit_above_twenty_percent() -> None:
+def test_field_dates_accepts_cloud_limit_above_legacy_twenty_percent() -> None:
     payload = _request().model_dump(mode="json")
     payload["maxCloudPercentage"] = 35
 
-    with pytest.raises(ValueError, match="less than or equal to 20"):
-        FieldDatesRequest.model_validate(payload)
+    assert FieldDatesRequest.model_validate(payload).maxCloudPercentage == 35
 
 
 def test_field_dates_rejects_more_than_sixty_four_dates() -> None:
@@ -259,18 +259,18 @@ def test_available_field_date_requires_exact_scene_and_usable_pixels() -> None:
             validPixelCount=10,
         )
 
-    with pytest.raises(ValueError, match="less than or equal to 20"):
-        FieldDateAvailability(
-            acquisitionDate=date(2026, 6, 2),
-            available=True,
-            selectedSceneDate=date(2026, 6, 2),
-            usablePixelPercentage=95,
-            cloudPercentage=35,
-            fieldCoveragePercentage=100,
-            shadowPercentage=0,
-            obscuredPercentage=35,
-            validPixelCount=10,
-        )
+    accepted = FieldDateAvailability(
+        acquisitionDate=date(2026, 6, 2),
+        available=True,
+        selectedSceneDate=date(2026, 6, 2),
+        usablePixelPercentage=95,
+        cloudPercentage=35,
+        fieldCoveragePercentage=100,
+        shadowPercentage=0,
+        obscuredPercentage=35,
+        validPixelCount=10,
+    )
+    assert accepted.status == "AVAILABLE"
 
 
 def test_field_dates_accepts_unknown_global_cloud_when_field_mask_is_clear() -> None:
@@ -392,8 +392,8 @@ def test_field_dates_raises_when_candidate_raster_cannot_be_read() -> None:
     service, _queries, _layers = _build_service()
     service._object_store._objects.pop("indices/scene-2026-06-01/ndvi.cog.tif")
 
-    with pytest.raises(AnalyticsRasterUnavailable):
-        service.field_dates(_request())
+    result = service.field_dates(_request())
+    assert result.dates[0].status == "PROCESSING_FAILED"
 
 
 def test_field_dates_endpoint_requires_auth_and_returns_batch() -> None:
@@ -424,7 +424,7 @@ def test_field_dates_endpoint_requires_auth_and_returns_batch() -> None:
     assert len(response.json()["data"]["dates"]) == 3
 
 
-def test_field_dates_endpoint_returns_503_for_raster_outage() -> None:
+def test_field_dates_endpoint_returns_processing_failed_for_raster_outage() -> None:
     api_key = "test-akasha-key"
     settings = Settings(
         environment=Environment.TEST,
@@ -442,7 +442,8 @@ def test_field_dates_endpoint_returns_503_for_raster_outage() -> None:
         json=_request().model_dump(mode="json"),
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 200
+    assert response.json()["data"]["dates"][0]["status"] == "PROCESSING_FAILED"
 
 
 def test_field_dates_rejects_duplicate_dates() -> None:
@@ -462,3 +463,68 @@ def test_field_dates_rejects_duplicate_dates() -> None:
         assert "dates must be unique" in str(exc)
     else:
         raise AssertionError("duplicate dates must be rejected")
+
+
+def test_field_dates_returns_typed_rejection_statuses_and_metrics() -> None:
+    service, _queries, _layers = _build_service()
+    result = service.field_dates(_request())
+    by_date = {item.acquisitionDate: item for item in result.dates}
+
+    assert by_date[date(2026, 6, 1)].status == "AVAILABLE"
+    assert by_date[date(2026, 6, 2)].status == "CLOUD_THRESHOLD_EXCEEDED"
+    assert by_date[date(2026, 6, 2)].obscuredPercentage == 100.0
+    assert "100.0% field cloud, cirrus, and shadow" in by_date[date(2026, 6, 2)].reason
+    assert by_date[date(2026, 6, 3)].status == "PROCESSING_FAILED"
+    assert by_date[date(2026, 6, 3)].validPixelCount == 0
+
+
+def test_field_dates_prefers_field_covering_cloud_rejection_across_tiles(
+    monkeypatch,
+) -> None:
+    service, _queries, _layers = _build_service()
+    cloudy = service._scene_repository.get("scene-2026-06-02")
+    unusable_edge = service._scene_repository.get("scene-2026-06-03")
+    assert cloudy is not None and unusable_edge is not None
+    monkeypatch.setattr(
+        service._scene_repository,
+        "list_candidates",
+        lambda **_kwargs: [unusable_edge, cloudy],
+    )
+
+    request = _request().model_copy(update={"dates": [date(2026, 6, 2)]})
+    result = service.field_dates(request).dates[0]
+
+    assert result.status == "CLOUD_THRESHOLD_EXCEEDED"
+    assert result.selectedSceneDate == date(2026, 6, 2)
+    assert result.obscuredPercentage == 100.0
+
+
+def test_field_date_cloud_threshold_accepts_zero_twenty_and_seventy_and_rejects_71() -> None:
+    service, _queries, _layers = _build_service()
+    mask_path = "masks/scene-2026-06-01/scl.tif"
+
+    # Equality is inclusive at the strict 0% boundary.
+    request = _request().model_copy(
+        update={"dates": [date(2026, 6, 1)], "maxCloudPercentage": 0}
+    )
+    assert service.field_dates(request).dates[0].available is True
+
+    # Five obscured pixels in a 5x5 field are exactly 20% and must pass.
+    exact_twenty = np.full((5, 5), 4, dtype="uint8")
+    exact_twenty.flat[:5] = 8
+    service._object_store.put_bytes(mask_path, _mask_cog(exact_twenty))
+    request = request.model_copy(update={"maxCloudPercentage": 20})
+    assert service.field_dates(request).dates[0].available is True
+
+    # A 68% field is rejected at 20 but accepted at the configured 70% maximum.
+    sixty_eight = np.full((5, 5), 4, dtype="uint8")
+    sixty_eight.flat[:17] = 8
+    service._object_store.put_bytes(mask_path, _mask_cog(sixty_eight))
+    assert service.field_dates(request).dates[0].available is False
+    request = request.model_copy(update={"maxCloudPercentage": 70})
+    assert service.field_dates(request).dates[0].available is True
+
+    payload = _request().model_dump(mode="json")
+    payload["maxCloudPercentage"] = 71
+    with pytest.raises(ValueError, match="less than or equal to 70"):
+        FieldDatesRequest.model_validate(payload)

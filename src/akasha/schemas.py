@@ -14,7 +14,7 @@ from akasha.processing.resourcesat import RESOURCESAT_SOURCE_COLLECTIONS, RESOUR
 
 T = TypeVar("T")
 FIELD_DATES_MAX_DATES = 64
-FIELD_DATES_MAX_CLOUD_PERCENTAGE = 20.0
+FIELD_DATES_MAX_CLOUD_PERCENTAGE = 70.0
 
 
 class ErrorPayload(BaseModel):
@@ -59,6 +59,59 @@ class SourceDatesResponse(BaseModel):
     sourceId: str
     aoiId: str
     dates: list[NaturalSourceDate]
+
+
+class LatestImagerySearch(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    viewport: dict[str, Any]
+    sourceId: Literal["sentinel-2-l2a"] = "sentinel-2-l2a"
+    processingLevel: Literal["L2A"] = "L2A"
+    lookbackDays: int = Field(default=365, ge=1, le=366)
+    maxCloudPercent: float = Field(default=10.0, ge=0, le=10)
+    limit: int = Field(default=24, ge=1, le=50)
+
+    @model_validator(mode="after")
+    def validate_viewport(self) -> Self:
+        if self.viewport.get("type") != "Polygon":
+            raise ValueError("viewport must be a GeoJSON Polygon")
+        coordinates = self.viewport.get("coordinates")
+        if not isinstance(coordinates, list) or not coordinates:
+            raise ValueError("viewport coordinates are required")
+        ring = coordinates[0]
+        if not isinstance(ring, list) or len(ring) < 4:
+            raise ValueError("viewport exterior ring requires at least four positions")
+        if any(
+            not isinstance(point, list)
+            or len(point) < 2
+            or not all(isinstance(value, (int, float)) for value in point[:2])
+            for point in ring
+        ):
+            raise ValueError("viewport positions must contain numeric longitude and latitude")
+        if ring[0][:2] != ring[-1][:2]:
+            raise ValueError("viewport exterior ring must be closed")
+        return self
+
+
+class SceneCandidate(BaseModel):
+    sceneId: str
+    acquisitionDate: date
+    acquisitionDatetime: datetime
+    sourceId: str
+    sensor: str
+    processingLevel: str
+    cloudPercent: float
+    coveragePercent: float = Field(ge=0, le=100)
+    coverageStatus: Literal["full", "partial"]
+    usable: bool
+    bounds: list[float]
+    unavailableReason: str | None = None
+
+
+class LatestImageryResult(BaseModel):
+    policyVersion: str
+    searchedAt: datetime
+    candidates: list[SceneCandidate]
 
 
 class SyncRequest(BaseModel):
@@ -106,8 +159,7 @@ class SyncRequest(BaseModel):
                 raise ValueError(f"landsat_backfill requires source_id {LANDSAT_SOURCE_ID}")
             if self.provider_route != LANDSAT_PRIMARY_PROVIDER_ROUTE:
                 raise ValueError(
-                    "landsat_backfill requires provider_route "
-                    f"{LANDSAT_PRIMARY_PROVIDER_ROUTE}"
+                    f"landsat_backfill requires provider_route {LANDSAT_PRIMARY_PROVIDER_ROUTE}"
                 )
             if self.mode not in {
                 "metadata_only",
@@ -124,9 +176,7 @@ class SyncRequest(BaseModel):
                 raise ValueError("resourcesat_backfill requires a ResourceSat source_id")
             expected_route = f"bhoonidhi:{RESOURCESAT_SOURCE_COLLECTIONS[self.source_id]}"
             if self.provider_route != expected_route:
-                raise ValueError(
-                    f"resourcesat_backfill requires provider_route {expected_route}"
-                )
+                raise ValueError(f"resourcesat_backfill requires provider_route {expected_route}")
             if self.mode not in {
                 "metadata_only",
                 "download_only",
@@ -224,6 +274,7 @@ class FieldIndexRequest(BaseModel):
     fallbackPolicy: Literal["nearest_valid_scene"] = "nearest_valid_scene"
     maxCloudPercentage: float = Field(default=20.0, ge=0, le=100)
     fieldId: str | None = Field(default=None, min_length=1)
+    renderProfile: Literal["standard", "contrast"] = "standard"
 
     @model_validator(mode="after")
     def validate_geometry(self) -> Self:
@@ -264,6 +315,14 @@ class FieldDatesRequest(BaseModel):
 
 
 class FieldDateAvailability(BaseModel):
+    status: Literal[
+        "AVAILABLE",
+        "CLOUD_THRESHOLD_EXCEEDED",
+        "INSUFFICIENT_FIELD_COVERAGE",
+        "PROCESSING_PENDING",
+        "PROCESSING_FAILED",
+        "NO_FIELD_INTERSECTION",
+    ] = "PROCESSING_PENDING"
     acquisitionDate: date
     available: bool
     selectedSceneDate: date | None = None
@@ -271,7 +330,7 @@ class FieldDateAvailability(BaseModel):
     cloudPercentage: float | None = Field(
         default=None,
         ge=0,
-        le=FIELD_DATES_MAX_CLOUD_PERCENTAGE,
+        le=100,
     )
     fieldCoveragePercentage: float | None = Field(default=None, ge=0, le=100)
     shadowPercentage: float | None = Field(default=None, ge=0, le=100)
@@ -282,6 +341,8 @@ class FieldDateAvailability(BaseModel):
     @model_validator(mode="after")
     def validate_availability(self) -> Self:
         if self.available:
+            if self.status != "AVAILABLE":
+                self.status = "AVAILABLE"
             if self.selectedSceneDate != self.acquisitionDate:
                 raise ValueError("available field dates must select the exact acquisition date")
             if self.usablePixelPercentage is None or self.validPixelCount <= 0:
@@ -299,18 +360,10 @@ class FieldDateAvailability(BaseModel):
             if self.reason is not None:
                 raise ValueError("available field dates cannot include an unavailable reason")
             return self
-        if self.selectedSceneDate is not None or self.usablePixelPercentage is not None:
-            raise ValueError("unavailable field dates cannot include selected-scene metrics")
-        quality_values = (
-            self.cloudPercentage,
-            self.fieldCoveragePercentage,
-            self.shadowPercentage,
-            self.obscuredPercentage,
-        )
-        if any(value is not None for value in quality_values) or self.validPixelCount != 0:
-            raise ValueError("unavailable field dates cannot include raster metrics")
         if not self.reason or not self.reason.strip():
             raise ValueError("unavailable field dates require a reason")
+        if self.status == "AVAILABLE":
+            raise ValueError("unavailable field dates cannot have AVAILABLE status")
         return self
 
 
@@ -324,9 +377,7 @@ class FieldSarRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     geometry: dict[str, Any]
-    sourceId: Literal["eos-04-sar-mrs-l2b", "nisar-ssar-beta-gcov"] = (
-        "eos-04-sar-mrs-l2b"
-    )
+    sourceId: Literal["eos-04-sar-mrs-l2b", "nisar-ssar-beta-gcov"] = "eos-04-sar-mrs-l2b"
     crs: Literal["EPSG:4326"] = "EPSG:4326"
     fieldId: str | None = Field(default=None, min_length=1)
     targetDate: date
@@ -335,9 +386,7 @@ class FieldSarRequest(BaseModel):
     includeHistory: bool = False
     historyLookbackDays: int = Field(default=180, ge=1, le=365)
     maximumHistoryObservations: int = Field(default=8, ge=1, le=12)
-    comparisonPolicyVersion: Literal["eos04-comparability-v1"] = (
-        "eos04-comparability-v1"
-    )
+    comparisonPolicyVersion: Literal["eos04-comparability-v1"] = "eos04-comparability-v1"
     minimumBaselineObservations: int = Field(default=5, ge=3, le=12)
 
     @model_validator(mode="after")
@@ -506,6 +555,12 @@ class FieldIndexVisualization(BaseModel):
     displayProfile: str | None
     thresholdProfile: str | None
     legend: list[dict[str, Any]] = Field(default_factory=list)
+    requestedProfile: Literal["standard", "contrast"] = "standard"
+    appliedProfile: Literal["standard", "contrast"] = "standard"
+    profileVersion: str = "standard-v1"
+    thresholds: list[float] = Field(default_factory=list)
+    palette: list[str] = Field(default_factory=list)
+    fallbackReason: str | None = None
 
 
 class FieldIndexQuality(BaseModel):
@@ -568,6 +623,12 @@ class ReadinessLastSuccessfulJob(BaseModel):
     completedAt: str
 
 
+class ReadinessAcquisitionDate(BaseModel):
+    acquisitionDate: date
+    sceneCount: int = Field(ge=0)
+    state: Literal["running", "complete", "partial", "failed", "retry"]
+
+
 class AnalyticsReadinessResponse(BaseModel):
     status: Literal["AVAILABLE", "STALE", "UNAVAILABLE"]
     sourceId: str
@@ -584,3 +645,9 @@ class AnalyticsReadinessResponse(BaseModel):
     unavailableReasons: list[ReadinessUnavailableReason] = Field(default_factory=list)
     reasonCode: str | None = None
     reason: str | None = None
+    heartbeatAt: str | None = None
+    latestFullySearchedDay: date | None = None
+    incompleteDayCount: int = Field(default=0, ge=0)
+    processingBacklog: int = Field(default=0, ge=0)
+    lastError: str | None = None
+    acquisitionDates: list[ReadinessAcquisitionDate] = Field(default_factory=list)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import numpy as np
 from rasterio.enums import Resampling
@@ -12,6 +12,10 @@ from akasha.catalog.backfill_repository import BackfillRunRecord
 from akasha.catalog.pgstac_repository import build_derived_item
 from akasha.catalog.raster_repository import RasterOutputRecord
 from akasha.catalog.scene_repository import ProviderSceneRecord
+from akasha.catalog.sync_ledger_repository import (
+    InMemorySyncLedgerRepository,
+    SyncLedgerRecord,
+)
 from akasha.catalog.tile_layer_repository import TileLayerRecord
 from akasha.config import RuntimeBackend, Settings
 from akasha.jobs.idempotency import compute_backfill_idempotency_key
@@ -27,7 +31,14 @@ from akasha.processing.sentinel2 import (
     validate_required_assets,
 )
 from akasha.processing.stac_assets import build_asset_manifest
-from akasha.providers.contracts import NormalizedAsset, NormalizedStacItem, ProviderSearchRequest
+from akasha.providers.contracts import (
+    NormalizedAsset,
+    NormalizedStacItem,
+    ProviderDataError,
+    ProviderErrorCategory,
+    ProviderSearchRequest,
+    ProviderSearchResult,
+)
 from akasha.providers.earthsearch import EarthSearchProvider
 from akasha.schemas import SyncRequest
 from akasha.services.source_mirroring import SourceMirroringService
@@ -83,6 +94,7 @@ class Sentinel2IngestionService:
         tile_layer_repository=None,
         provider: EarthSearchProvider | None = None,
         mirroring_service: SourceMirroringService | None = None,
+        sync_ledger_repository=None,
     ) -> None:
         self._job_store = job_store
         self._stage_store = stage_store
@@ -99,11 +111,10 @@ class Sentinel2IngestionService:
             settings.runtime_backend == RuntimeBackend.MEMORY and not settings.live_provider_tests
         )
         self._provider = provider or (
-            _EmptyProvider()
-            if use_empty_provider
-            else EarthSearchProvider(settings)
+            _EmptyProvider() if use_empty_provider else EarthSearchProvider(settings)
         )
         self._mirroring_service = mirroring_service
+        self._sync_ledger_repository = sync_ledger_repository or InMemorySyncLedgerRepository()
 
     def latest_processed_acquisition_date(
         self,
@@ -116,10 +127,7 @@ class Sentinel2IngestionService:
             aoi_id=aoi_id,
         )
         for scene in reversed(scenes):
-            if (
-                scene.acquisition_at is not None
-                and self._scene_is_complete(scene)
-            ):
+            if scene.acquisition_at is not None and self._scene_is_complete(scene):
                 return scene.acquisition_at.date()
         return None
 
@@ -184,19 +192,21 @@ class Sentinel2IngestionService:
             aoi = self._aoi_repository.get(job.aoi_id)
             if aoi is None:
                 raise ValueError(f"AOI not found: {job.aoi_id}")
-            items = self._provider.search(
-                ProviderSearchRequest(
-                    source_id=job.source_id,
-                    provider_collection="sentinel-2-l2a",
-                    date_start=datetime.fromisoformat(job.date_start).date(),
-                    date_end=datetime.fromisoformat(job.date_end).date(),
-                    intersects=aoi.geometry,
-                    max_cloud_percentage=None,
-                    required_assets=SENTINEL2_REQUIRED_ASSETS,
-                    max_items=self._settings.backfill_search_item_cap,
+            start_date = datetime.fromisoformat(job.date_start).date()
+            end_date = datetime.fromisoformat(job.date_end).date()
+            summary = self._empty_summary()
+            for provider_date in _date_range(start_date, end_date):
+                day_summary, exhausted = self._execute_provider_day(
+                    job=job,
+                    aoi=aoi,
+                    provider_date=provider_date,
+                    mode=mode,
                 )
-            )
-            summary = self._process_items(job=job, items=items, mode=mode)
+                summary = _merge_summaries(summary, day_summary)
+                if not exhausted:
+                    # A safety-cap day has not been fully searched.  Keep the job
+                    # retryable so the next run revisits the same provider date.
+                    continue
             self._stage_store.mark_completed(search_stage.stage_id, metadata=summary.to_metadata())
             self._upsert_backfill_summary(job, summary)
             return self._job_store.mark_completed(
@@ -215,6 +225,110 @@ class Sentinel2IngestionService:
                 )
             self._job_store.mark_failed(job, error=str(exc))
             raise
+
+    def _execute_provider_day(
+        self,
+        *,
+        job,
+        aoi,
+        provider_date: date,
+        mode: str,
+    ) -> tuple[BackfillSummary, bool]:
+        existing = self._sync_ledger_repository.get(
+            source_id=job.source_id, aoi_id=job.aoi_id, provider_date=provider_date
+        )
+        ledger = SyncLedgerRecord(
+            source_id=job.source_id,
+            aoi_id=job.aoi_id,
+            provider_date=provider_date,
+            status="running",
+            retry_count=(existing.retry_count if existing else 0),
+            started_at=existing.started_at if existing else datetime.now(UTC),
+            metadata={"mode": mode},
+        )
+        self._sync_ledger_repository.upsert(ledger)
+        request = ProviderSearchRequest(
+            source_id=job.source_id,
+            provider_collection="sentinel-2-l2a",
+            date_start=provider_date,
+            date_end=provider_date,
+            intersects=aoi.geometry,
+            # Search is intentionally unfiltered.  Field-clipped quality decides
+            # usability after every returned scene has been registered/processed.
+            max_cloud_percentage=None,
+            required_assets=SENTINEL2_REQUIRED_ASSETS,
+            max_items=self._settings.backfill_search_item_cap,
+        )
+        try:
+            result = self._provider_search(request)
+        except ProviderDataError as exc:
+            ledger.status = "retry" if _retryable_provider_error(exc) else "failed"
+            ledger.retry_count += 1
+            ledger.last_error = str(exc)
+            ledger.heartbeat_at = datetime.now(UTC)
+            ledger.completed_at = datetime.now(UTC)
+            self._sync_ledger_repository.upsert(ledger)
+            raise
+        ledger.searched_count = len(result.items)
+        # A late-publication overlap must never erase an acquisition that was
+        # registered by an earlier exhaustive search if the provider
+        # transiently returns fewer records on a later pass.
+        ledger.scene_count = max(existing.scene_count if existing else 0, len(result.items))
+        ledger.search_complete = result.exhausted
+        ledger.heartbeat_at = datetime.now(UTC)
+        # Publish discovery progress before potentially long asset mirroring and
+        # raster processing so monitoring reports a real backlog and heartbeat
+        # while the provider day is still running.
+        self._sync_ledger_repository.upsert(ledger)
+        summary = self._process_items(job=job, items=result.items, mode=mode)
+        processed_count = sum(
+            1
+            for item in result.items
+            if (
+                (scene := self._scene_repository.get_by_provider_product(
+                    provider_adapter=item.provider_adapter,
+                    provider_product_id=item.stac_item_id,
+                ))
+                is not None
+                and self._scene_is_complete(scene)
+            )
+        )
+        ledger.processed_count = max(
+            existing.processed_count if existing else 0,
+            processed_count,
+        )
+        ledger.failed_count = summary.failed_count
+        ledger.last_error = next(iter(summary.failed_items.values()), None)
+        ledger.completed_at = datetime.now(UTC)
+        ledger.status = (
+            "complete"
+            if result.exhausted
+            and summary.failed_count == 0
+            and ledger.processed_count >= ledger.scene_count
+            and (mode == "full_pipeline" or not result.items)
+            else "partial"
+        )
+        if summary.failed_count and ledger.last_error:
+            ledger.retry_count += 1
+        self._sync_ledger_repository.upsert(ledger)
+        return summary, result.exhausted
+
+    def _provider_search(self, request: ProviderSearchRequest) -> ProviderSearchResult:
+        search_with_status = getattr(self._provider, "search_with_status", None)
+        if search_with_status is not None:
+            return search_with_status(request)
+        return ProviderSearchResult(items=self._provider.search(request))
+
+    @staticmethod
+    def _empty_summary() -> BackfillSummary:
+        return BackfillSummary(
+            searched_count=0,
+            accepted_count=0,
+            mirrored_asset_count=0,
+            processed_count=0,
+            skipped_count=0,
+            failed_count=0,
+        )
 
     def recover_worker_lost(self, job_id: str) -> None:
         """Close an interrupted stage before Celery redelivers a worker-lost task."""
@@ -249,8 +363,8 @@ class Sentinel2IngestionService:
         failed_items: dict[str, str] = {}
 
         for item in items:
+            scene: ProviderSceneRecord | None = None
             try:
-                validate_required_assets(item)
                 accepted += 1
                 stac_item_ids.append(item.stac_item_id)
                 logical_scene_keys.append(item.logical_scene_key)
@@ -259,16 +373,24 @@ class Sentinel2IngestionService:
                     provider_product_id=item.stac_item_id,
                 )
                 if existing_scene is not None and self._scene_is_complete(existing_scene):
+                    if existing_scene.processing_state != "complete":
+                        existing_scene.processing_state = "complete"
+                        existing_scene.last_error = None
+                        self._scene_repository.upsert(existing_scene)
                     skipped += 1
                     continue
                 if existing_scene is not None:
                     existing_outputs = self._complete_scene_outputs(existing_scene)
                     if existing_outputs is not None:
                         self._publish_scene(existing_scene, item, existing_outputs)
+                        existing_scene.processing_state = "complete"
+                        existing_scene.last_error = None
+                        self._scene_repository.upsert(existing_scene)
                         skipped += 1
                         continue
                 scene = self._register_scene(job, item)
                 self._store_manifests(item)
+                validate_required_assets(item)
                 asset_records = self._register_assets(scene, item)
                 if mode == "metadata_only":
                     skipped += 1
@@ -286,10 +408,24 @@ class Sentinel2IngestionService:
                 if mode == "mirror_only":
                     skipped += 1
                     continue
+                scene.processing_state = "processing"
+                scene.last_attempt_at = datetime.now(UTC)
+                self._scene_repository.upsert(scene)
                 processed += self._process_scene(scene=scene, item=item, assets=mirrored_records)
+                scene.processing_state = "complete"
+                scene.last_error = None
+                self._scene_repository.upsert(scene)
             except Exception as exc:
                 failed += 1
                 failed_items[item.stac_item_id] = str(exc)
+                if scene is not None:
+                    scene.processing_state = (
+                        "retrying" if isinstance(exc, ProviderDataError) else "failed"
+                    )
+                    scene.retry_count += 1
+                    scene.last_error = str(exc)
+                    scene.last_attempt_at = datetime.now(UTC)
+                    self._scene_repository.upsert(scene)
 
         return BackfillSummary(
             searched_count=len(items),
@@ -324,6 +460,10 @@ class Sentinel2IngestionService:
         return [by_index[index_name] for index_name in SENTINEL2_INDEX_ASSETS]
 
     def _register_scene(self, job: Job, item: NormalizedStacItem) -> ProviderSceneRecord:
+        existing = self._scene_repository.get_by_provider_product(
+            provider_adapter=item.provider_adapter,
+            provider_product_id=item.stac_item_id,
+        )
         scene = ProviderSceneRecord(
             id=None,
             provider_adapter=item.provider_adapter,
@@ -341,6 +481,9 @@ class Sentinel2IngestionService:
             },
             aoi_id=job.aoi_id,
             logical_scene_key=item.logical_scene_key,
+            processing_state="pending",
+            retry_count=existing.retry_count if existing is not None else 0,
+            last_error=existing.last_error if existing is not None else None,
         )
         return self._scene_repository.upsert(scene)
 
@@ -438,9 +581,7 @@ class Sentinel2IngestionService:
             second_values = _match_grid(second, first, resampling=Resampling.bilinear)
             scl_values = _match_grid(scl, first, resampling=Resampling.nearest).astype("uint8")
             valid_mask = (
-                np.isfinite(first.values)
-                & np.isfinite(second_values)
-                & scl_valid_mask(scl_values)
+                np.isfinite(first.values) & np.isfinite(second_values) & scl_valid_mask(scl_values)
             )
             output_transform = first.transform
             output_crs = first.crs
@@ -542,6 +683,8 @@ class Sentinel2IngestionService:
             outputs=outputs,
             bbox=item.bbox,
             geometry=scene.scene_geometry,
+            source_assets=self._asset_repository.list_for_scene(scene.id or ""),
+            mirror_bucket=self._settings.minio_bucket,
         )
         self._pgstac_repository.upsert_item_json(item_json)
         scene.pgstac_item_id = item_json.id
@@ -636,3 +779,36 @@ class _EmptyProvider:
     def search(self, request: ProviderSearchRequest) -> list[NormalizedStacItem]:
         del request
         return []
+
+
+def _date_range(start_date: date, end_date: date):
+    current = start_date
+    while current <= end_date:
+        yield current
+        current += timedelta(days=1)
+
+
+def _retryable_provider_error(error: ProviderDataError) -> bool:
+    return error.category in {
+        ProviderErrorCategory.PROVIDER_SLA_UNAVAILABLE,
+        ProviderErrorCategory.SOURCE_RATE_LIMITED,
+        ProviderErrorCategory.EXTERNAL_ASSET_READ_FAILED,
+        ProviderErrorCategory.DOWNLOAD_FAILED,
+    }
+
+
+def _merge_summaries(first: BackfillSummary, second: BackfillSummary) -> BackfillSummary:
+    return BackfillSummary(
+        searched_count=first.searched_count + second.searched_count,
+        accepted_count=first.accepted_count + second.accepted_count,
+        mirrored_asset_count=first.mirrored_asset_count + second.mirrored_asset_count,
+        processed_count=first.processed_count + second.processed_count,
+        skipped_count=first.skipped_count + second.skipped_count,
+        failed_count=first.failed_count + second.failed_count,
+        actual_source_mirror_bytes=first.actual_source_mirror_bytes
+        + second.actual_source_mirror_bytes,
+        stac_item_ids=first.stac_item_ids + second.stac_item_ids,
+        logical_scene_keys=first.logical_scene_keys + second.logical_scene_keys,
+        mirror_checksums={**first.mirror_checksums, **second.mirror_checksums},
+        failed_items={**first.failed_items, **second.failed_items},
+    )
